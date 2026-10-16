@@ -22,9 +22,12 @@ def main(args):
         )
         return 1
     if args[:2] == ["auth", "status"]:
-        out({"account": "user@work.com", "mode": "device-code"})
+        out({"account": "user@work.com", "user": "user@work.com", "name": "Eu Mesmo", "mode": "device-code"})
         return 0
     if args[:2] in (["auth", "login"], ["auth", "logout"]):
+        return 0
+    if args[:2] == ["chat", "list"] and os.environ.get("FAKE_X_CHATS"):
+        out(json.load(open(os.environ["FAKE_X_CHATS"])))
         return 0
     if args[:2] == ["chat", "list"]:
         n = int(args[args.index("-n") + 1]) if "-n" in args else 20
@@ -36,6 +39,11 @@ def main(args):
     if args[:2] == ["channel", "list"]:
         out([{"id": "19:c@thread.tacv2", "displayName": "Geral"}])
         return 0
+    if args[:2] == ["message", "list"] and os.environ.get("FAKE_X_MSGS"):
+        # fixture: devolve as últimas N, na ordem do arquivo (pode vir embaralhada/duplicada)
+        n = int(args[args.index("-n") + 1]) if "-n" in args else 20
+        out(json.load(open(os.environ["FAKE_X_MSGS"]))[-n:])
+        return 0
     if args[:2] == ["message", "list"]:
         n = int(args[args.index("-n") + 1]) if "-n" in args else 20
         fmt = args[args.index("-O") + 1] if "-O" in args else "markdown"
@@ -45,6 +53,9 @@ def main(args):
         text = args[args.index("--content") + 1]
         fmt = "html" if "-I" in args and args[args.index("-I") + 1] == "html" else "markdown"
         out({"id": "m9", "conversation": args[2], "content": text, "format": fmt})
+        return 0
+    if args[:2] == ["user", "search"] and os.environ.get("FAKE_X_USERS"):
+        out(json.load(open(os.environ["FAKE_X_USERS"])).get(args[2], []))
         return 0
     if args[:2] == ["user", "search"]:
         out([{"displayName": "Ana", "query": args[2]}])

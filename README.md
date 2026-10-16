@@ -38,7 +38,8 @@ teams teams channel-create TEAM_ID --name N      # Graph
 teams channel messages TEAM_ID CHANNEL_ID        # xteams
 teams channel send TEAM_ID CHANNEL_ID --message T  # xteams (--file vai pro Graph)
 teams chats [list] [--limit N]                   # xteams
-teams chat messages CHAT_ID                      # xteams
+teams chat context CHAT_ID [--limit N]           # xteams: leia ANTES de escrever
+teams chat messages CHAT_ID                      # xteams (até 200; Graph até 50)
 teams chat send CHAT_ID --message T              # xteams (--to/--file vão pro Graph)
 teams chat create --members A,B                  # Graph
 teams people search QUERY                        # xteams
@@ -58,8 +59,64 @@ Flags globais (valem antes ou depois do subcomando):
 | `-q, --quiet` / `-v, --verbose` | silêncio / mostra o motor em stderr |
 | `--no-input` | nunca pergunta; falha se faltar dado |
 | `--dry-run` | mostra o plano de escrita sem executar (sem sessão) |
-| `--yes` | pula confirmação de escrita |
+| `--yes` | pula confirmação de escrita (não pula a guarda de mensagem recente) |
 | `--timeout SEG` | timeout por chamada (padrão: 60) |
+
+## Antes de enviar
+
+Quem escreve em nome de alguém precisa do contexto da conversa, não só do texto.
+Três problemas reais que este fluxo evita: falar de uma pessoa como se estivesse
+fora do grupo quando já estava (e já tinha visto a mensagem), mandar mensagem no
+meio de uma conversa em que o dono da conta estava digitando ao vivo, e não ver
+uma mensagem cuja data estava errada.
+
+```sh
+teams chat context CHAT_ID                # humano
+teams chat context CHAT_ID --limit 30 --json
+```
+
+Em uma chamada devolve: tipo (1:1, grupo, reunião, canal), título, **membros**
+(nome, e-mail, quem sou eu), as últimas mensagens em ordem cronológica com autor,
+horário local (`America/Sao_Paulo`, ajustável com `--tz`), citações/respostas
+(quem respondeu a quem e o trecho citado), menções, e um resumo: minha última
+mensagem há quantos minutos, se outros escreveram depois e se estou "ativo agora"
+(mensagem minha nos últimos 5 min, ajustável com `--active-minutes`).
+
+Limites que a saída declara de propósito:
+
+- O xteams **não lista membros**. Eles são inferidos de autores, citações,
+  menções e eventos de entrada nas últimas 200 mensagens (`members_approximate:
+  true`). Quem nunca escreveu pode estar no grupo; membros só com MRI aparecem em
+  `members_unresolved_mris`. E-mails vêm de `user search` (exige login; desligue
+  com `--no-emails`).
+- Não existe recibo de leitura: não dá para saber quem já viu uma mensagem.
+- A janela de leitura é de **200 mensagens** (teto do Teams por chamada).
+
+### Guarda de envio
+
+`chat send CHAT_ID` e `channel send` olham as últimas mensagens antes de enviar:
+
+- Se **você** escreveu nessa conversa há menos de `--recent-minutes` (padrão 5),
+  mostram as últimas mensagens e **abortam (exit 2)** quando não há como
+  perguntar: `--no-input`, `--yes` ou sem TTY. Em terminal interativo avisam e
+  seguem para a confirmação normal.
+- `--force` ignora a guarda; `--recent-minutes 0` a desliga.
+- `--dry-run` mostra as 5 últimas mensagens (e avisa se o envio real exigiria
+  `--force`), sem nunca abortar.
+- Não se aplica a `--to` nem a `--file` (vão pelo Graph, sem leitura da conversa)
+  nem a quem o xteams não consegue identificar (avisa e segue).
+
+Sugestão de texto para a skill do agente: `docs/skill-antes-de-enviar.md`.
+
+### Ordem e datas erradas
+
+Mensagens do xteams são ordenadas e deduplicadas por `sequenceId` (ou pelo id
+numérico), nunca pela data: o relógio do remetente pode estar errado e o Teams
+chega a exibir datas absurdas. O horário mostrado é o de **chegada ao servidor**
+(`originalarrivaltime`); quando `composetime` diverge mais de 10 min, ou a data
+destoa da ordem de `sequenceId`, a mensagem sai com uma anotação em `anomalies`.
+Consumidores (scripts, vigias) devem guardar o último `sequenceId` visto, não a
+última data.
 
 ## Contrato de I/O
 
@@ -112,6 +169,7 @@ e informe via `--client-id` ou `TEAMS_CLIENT_ID`.
 ```sh
 teams auth login
 teams chats --limit 5
+teams chat context '<chat-id>'
 teams chat messages '<chat-id>' --limit 10
 teams channel messages '<team>' '<channel-id>' --limit 5 --json
 teams people search "Maria Silva"
@@ -128,6 +186,8 @@ teams --profile pessoal chats --limit 5
 - xteams usa APIs privadas do Teams: pode quebrar sem aviso. É conta única.
 - Leitura de canal via Graph exige consentimento de admin no corporativo;
   por isso o padrão é xteams.
+- `chat messages`/`channel messages` leem no máximo 200 mensagens por chamada
+  via xteams (50 via Graph); `chat context` sempre lê 200 e exibe `--limit`.
 - Anexo limitado a 4MB; link de compartilhamento é best-effort.
 - Contas pessoais têm suporte parcial a Teams no Graph.
 
