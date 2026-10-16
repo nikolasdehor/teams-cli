@@ -517,6 +517,8 @@ def _send_guard(parsed: argparse.Namespace, xbin: str | None, timeout: float) ->
     except xbe.XteamsError as exc:
         if parsed.dry_run:
             eprint(f"[dry-run] não consegui ler as últimas mensagens: {exc}")
+        else:
+            eprint(f"aviso: não consegui ler as últimas mensagens ({exc}); guarda de mensagem recente não aplicada")
         return
     if parsed.dry_run:
         if act["last"] and not parsed.quiet:

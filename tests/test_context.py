@@ -285,6 +285,15 @@ def test_guard_unknown_identity_does_not_block(fake_x, monkeypatch, tmp_path, ca
     assert "guarda de mensagem recente não aplicada" in capsys.readouterr().err
 
 
+def test_guard_read_failure_warns_instead_of_silently_skipping(fake_x, monkeypatch, capsys):
+    def boom(*a, **k):
+        raise cli.xbe.XteamsError("rede caiu")
+
+    monkeypatch.setattr(ctx, "recent_activity", boom)
+    assert cli.main(send_argv("--yes", "--json")) == 0
+    assert "guarda de mensagem recente não aplicada" in capsys.readouterr().err
+
+
 def test_dry_run_shows_last_five_and_never_aborts(fake_x, monkeypatch, tmp_path, capsys):
     msgs = [msg(i, "Ana" if i < 7 else ME, f"<p>texto {i}</p>", 4 - i * 0.3) for i in range(1, 9)]
     use_messages(monkeypatch, tmp_path, msgs)
