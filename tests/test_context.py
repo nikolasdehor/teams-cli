@@ -135,7 +135,7 @@ def build(fake_x, **kw):
 def test_context_members_replies_mentions_and_summary(fake_x, monkeypatch, tmp_path):
     use_messages(
         monkeypatch, tmp_path, sample_messages(),
-        users={"Ana Souza": [{"DisplayName": "Ana Souza", "EmailAddresses": ["ana@x.com"], "MRI": "8:orgid:ana"}]},
+        users={"Ana Souza": [{"DisplayName": "Ana Souza", "EmailAddresses": ["ana@x.com"], "MRI": "8:orgid:aaaa1111-0000-0000-0000-000000000001"}]},
         chats=[{"id": GROUP, "threadProperties": {"topic": "Time Lume"}}],
     )
     c = build(fake_x)
@@ -326,3 +326,27 @@ def test_members_merge_first_name_mentions_and_skip_placeholder():
     members, _ = ctx.infer_members(GROUP, msgs, ME)
     names = [m["name"] for m in members]
     assert "Paulo" not in names and "Paulo Vitor Cotta" in names and "Display Name" not in names
+
+
+def test_resolve_emails_skips_ambiguous_homonyms_and_prefers_known_mri(monkeypatch):
+    twins = [
+        {"DisplayName": "Ana Souza", "EmailAddresses": ["a1@x.com"], "MRI": "8:orgid:a1"},
+        {"DisplayName": "Ana Souza", "EmailAddresses": ["a2@x.com"], "MRI": "8:orgid:a2"},
+    ]
+    monkeypatch.setattr(ctx.xbe, "run", lambda *a, **k: twins)
+    blind = {"name": "Ana Souza", "email": None, "mri": None, "is_me": False}
+    known = {"name": "Ana Souza", "email": None, "mri": "8:orgid:a2", "is_me": False}
+    ctx.resolve_emails("x", [blind, known], 5)
+    assert blind["email"] is None and known["email"] == "a2@x.com"
+
+
+def test_guard_reads_full_window_not_just_last_20(fake_x, monkeypatch, tmp_path):
+    msgs = [msg(1, ME, "<p>minha</p>", 3)] + [msg(i, "Ana", f"<p>{i}</p>", 2) for i in range(2, 30)]
+    use_messages(monkeypatch, tmp_path, msgs)
+    assert cli.main(send_argv("--yes", "--json")) == cli.EXIT_USAGE
+
+
+def test_context_rejects_unknown_timezone(fake_x, monkeypatch, tmp_path, capsys):
+    use_messages(monkeypatch, tmp_path, [msg(1, "Ana", "<p>a</p>", 1)])
+    assert cli.main(["chat", "context", GROUP, "--no-emails", "--tz", "America/Nao_Existe"]) == cli.EXIT_USAGE
+    assert "fuso desconhecido" in capsys.readouterr().err

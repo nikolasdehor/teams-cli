@@ -91,8 +91,10 @@ def get_tz(name: str) -> tzinfo:
         from zoneinfo import ZoneInfo
 
         return ZoneInfo(name)
-    except Exception:  # noqa: BLE001 - sem tzdata (ex: Windows): cai em UTC-3 fixo
-        return timezone(timedelta(hours=-3), name="BRT")
+    except Exception:  # noqa: BLE001 - fuso inválido ou sem tzdata (ex: Windows)
+        if name == DEFAULT_TZ:  # São Paulo é UTC-3 fixo desde 2019
+            return timezone(timedelta(hours=-3), name="BRT")
+        raise ValueError(f"fuso desconhecido ou indisponível: {name}") from None
 
 
 _REPLY_RE = re.compile(
@@ -235,12 +237,17 @@ def resolve_emails(xbin: str | None, members: list[dict], timeout: float) -> Non
             found = xbe.run(xbin, ["user", "search", entry["name"]], timeout)
         except xbe.XteamsError:
             return  # sem login ou sem rede: não insiste nas demais
-        for person in found if isinstance(found, list) else []:
-            if str(person.get("DisplayName", "")).strip().lower() == entry["name"].lower():
-                mails = person.get("EmailAddresses") or []
-                entry["email"] = mails[0] if mails else None
-                entry["mri"] = entry["mri"] or person.get("MRI")
-                break
+        same = [
+            p for p in (found if isinstance(found, list) else [])
+            if str(p.get("DisplayName", "")).strip().lower() == entry["name"].lower()
+        ]
+        if entry["mri"]:
+            same = [p for p in same if p.get("MRI") == entry["mri"]]
+        if len(same) != 1:  # homônimos sem MRI que desempate: melhor sem e-mail que o e-mail errado
+            continue
+        mails = same[0].get("EmailAddresses") or []
+        entry["email"] = mails[0] if mails else None
+        entry["mri"] = entry["mri"] or same[0].get("MRI")
 
 
 # --- contexto -----------------------------------------------------------------
@@ -399,7 +406,7 @@ def recent_activity(
     """Olha as últimas mensagens: o próprio usuário escreveu há menos de N min?"""
     now = now or datetime.now(timezone.utc)
     me = whoami(xbin, timeout)
-    raw = xbe.run(xbin, ["message", "list", conv, "-n", "20"], timeout)
+    raw = xbe.run(xbin, ["message", "list", conv, "-n", str(MAX_WINDOW)], timeout)
     msgs = normalize_messages(raw if isinstance(raw, list) else [])
     real = [m for m in msgs if is_real_message(m)]
     result: dict = {"known_me": bool(me.get("name")), "me_name": me.get("name"), "recent_own": False, "minutes_ago": None,

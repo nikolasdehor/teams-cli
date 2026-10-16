@@ -446,6 +446,10 @@ def run_x(parsed: argparse.Namespace, xbin: str | None, timeout: float, fmt: str
     if cmd == "chat" and sub == "context":
         limit = _check_limit(parsed.limit, "limit", 1, ctxmod.MAX_WINDOW)
         active = _check_limit(parsed.active_minutes, "active-minutes", 1, 1440)
+        try:
+            ctxmod.get_tz(parsed.tz)
+        except ValueError as exc:
+            raise UsageError(str(exc)) from None
         return ctxmod.build_context(
             xbin,
             parsed.chat_id,
