@@ -10,6 +10,7 @@ from typing import Any
 from urllib.parse import quote
 
 from . import __version__, auth, config
+from . import context as ctxmod
 from . import xteams as xbe
 from .graph import AuthExpired, Forbidden, Graph, GraphError, NotFound
 from .output import emit, eprint, unwrap_collection
@@ -96,7 +97,7 @@ def build_parser() -> argparse.ArgumentParser:
     chm = ch_sub.add_parser("messages", parents=[gs], help="ler mensagens do canal")
     chm.add_argument("team_id")
     chm.add_argument("channel_id")
-    chm.add_argument("--limit", type=int, default=20)
+    chm.add_argument("--limit", type=int, default=20, help="1-200 via xteams (Graph: 1-50)")
     chs = ch_sub.add_parser("send", parents=[gs], help="postar no canal (escrita)")
     chs.add_argument("team_id")
     chs.add_argument("channel_id")
@@ -117,7 +118,22 @@ def build_parser() -> argparse.ArgumentParser:
     ct_sub = ct.add_subparsers(dest="sub", required=True, metavar="<ação>")
     ctm = ct_sub.add_parser("messages", parents=[gs], help="ler mensagens")
     ctm.add_argument("chat_id")
-    ctm.add_argument("--limit", type=int, default=20)
+    ctm.add_argument("--limit", type=int, default=20, help="1-200 via xteams (Graph: 1-50)")
+    ctx = ct_sub.add_parser(
+        "context",
+        parents=[gs],
+        help="o que ler ANTES de escrever: tipo, membros, últimas mensagens, atividade",
+    )
+    ctx.add_argument("chat_id")
+    ctx.add_argument("--limit", type=int, default=15, help="mensagens exibidas (padrão 15; lê até 200)")
+    ctx.add_argument("--tz", default=ctxmod.DEFAULT_TZ, help="fuso dos horários exibidos")
+    ctx.add_argument("--no-emails", action="store_true", help="não busca e-mails dos membros (evita `user search`)")
+    ctx.add_argument(
+        "--active-minutes",
+        type=int,
+        default=ctxmod.DEFAULT_GUARD_MINUTES,
+        help="janela do 'estou ativo agora' (padrão 5)",
+    )
     cts = ct_sub.add_parser("send", parents=[gs], help="enviar mensagem (escrita)")
     cts.add_argument("chat_id", nargs="?", default=None)
     cts.add_argument("--to", default=None, help="email: usa ou cria o 1:1")
@@ -151,6 +167,13 @@ def _message_args(sp: argparse.ArgumentParser) -> None:
     sp.add_argument("--message-file", default=None)
     sp.add_argument("--file", default=None, help="anexo (sobe para o OneDrive, até 4MB)")
     sp.add_argument("--html", action="store_true", help="mensagem em HTML")
+    sp.add_argument(
+        "--recent-minutes",
+        type=int,
+        default=ctxmod.DEFAULT_GUARD_MINUTES,
+        help="guarda: avisa/aborta se VOCÊ escreveu há menos de N min nessa conversa (padrão 5; 0 desliga)",
+    )
+    sp.add_argument("--force", action="store_true", help="ignora a guarda de mensagem recente")
 
 
 def _read_text(parsed: argparse.Namespace) -> str:
@@ -282,6 +305,8 @@ def run_command(parsed: argparse.Namespace, graph: Graph) -> tuple[Any, str | No
         limit = _check_limit(parsed.limit, "limit", 1, 50)
         data = graph.get(f"/me/chats/{_q(parsed.chat_id)}/messages", params={"$top": limit})
         return unwrap_collection(data), None
+    if cmd == "chat" and sub == "context":
+        raise UsageError("chat context só funciona pelo motor xteams (sem --graph nem perfil não-padrão)")
     if cmd == "chat" and sub == "send":
         if not parsed.chat_id and not parsed.to:
             raise UsageError("chat send exige CHAT_ID ou --to EMAIL")
@@ -408,14 +433,28 @@ def run_x(parsed: argparse.Namespace, xbin: str | None, timeout: float, fmt: str
     if cmd == "teams" and sub == "channels":
         return xbe.run(xbin, ["channel", "list", parsed.team_id], timeout), None
     if cmd == "channel" and sub == "messages":
-        limit = _check_limit(parsed.limit, "limit", 1, 50)
-        return xbe.run(xbin, ["message", "list", parsed.channel_id, "-n", str(limit), "-O", out], timeout), None
+        limit = _check_limit(parsed.limit, "limit", 1, ctxmod.MAX_WINDOW)
+        raw = xbe.run(xbin, ["message", "list", parsed.channel_id, "-n", str(limit), "-O", out], timeout)
+        return ctxmod.normalize_messages(raw), None
     if cmd == "channel" and sub == "send":
         _, desc = _send_payload(parsed, None)
         return None, f"postar no canal {parsed.channel_id} {desc}"
     if cmd == "chat" and sub == "messages":
-        limit = _check_limit(parsed.limit, "limit", 1, 50)
-        return xbe.run(xbin, ["message", "list", parsed.chat_id, "-n", str(limit), "-O", out], timeout), None
+        limit = _check_limit(parsed.limit, "limit", 1, ctxmod.MAX_WINDOW)
+        raw = xbe.run(xbin, ["message", "list", parsed.chat_id, "-n", str(limit), "-O", out], timeout)
+        return ctxmod.normalize_messages(raw), None
+    if cmd == "chat" and sub == "context":
+        limit = _check_limit(parsed.limit, "limit", 1, ctxmod.MAX_WINDOW)
+        active = _check_limit(parsed.active_minutes, "active-minutes", 1, 1440)
+        return ctxmod.build_context(
+            xbin,
+            parsed.chat_id,
+            limit=limit,
+            timeout=timeout,
+            tz_name=parsed.tz,
+            guard_minutes=active,
+            resolve=not parsed.no_emails,
+        ), None
     if cmd == "chat" and sub == "send":
         if not parsed.chat_id and not parsed.to:
             raise UsageError("chat send exige CHAT_ID ou --to EMAIL")
@@ -445,6 +484,64 @@ def run_x_write(parsed: argparse.Namespace, xbin: str | None, timeout: float) ->
     if parsed.html:
         args += ["-I", "html"]
     return xbe.run(xbin, args, timeout)
+
+
+def _x_conv(parsed: argparse.Namespace) -> str | None:
+    """Conversa-alvo de um envio via xteams (None se não for envio por id)."""
+    cmd, sub = parsed.cmd, getattr(parsed, "sub", None)
+    if cmd == "channel" and sub == "send":
+        return parsed.channel_id
+    if cmd == "chat" and sub == "send":
+        return parsed.chat_id
+    return None
+
+
+def _send_guard(parsed: argparse.Namespace, xbin: str | None, timeout: float) -> None:
+    """Antes de enviar: mostra as últimas mensagens e barra se VOCÊ acabou de escrever.
+
+    No --dry-run só mostra (nunca aborta). Sem --force, mensagem sua dentro da janela aborta
+    quando não há como perguntar (--no-input, --yes ou sem TTY); em terminal interativo avisa
+    e segue para a confirmação normal.
+    """
+    conv = _x_conv(parsed)
+    if conv is None:
+        return
+    window = max(parsed.recent_minutes, 0)
+    try:
+        act = ctxmod.recent_activity(xbin, conv, window, timeout)
+    except xbe.XteamsAuthError:
+        if parsed.dry_run:
+            eprint("[dry-run] sem sessão xteams: não consegui mostrar as últimas mensagens")
+            return
+        raise
+    except xbe.XteamsError as exc:
+        if parsed.dry_run:
+            eprint(f"[dry-run] não consegui ler as últimas mensagens: {exc}")
+        return
+    if parsed.dry_run:
+        if act["last"] and not parsed.quiet:
+            eprint("[dry-run] últimas mensagens da conversa:")
+            for line in ctxmod.describe_last(act["last"], act["me_name"]):
+                eprint(line)
+        if act["recent_own"] and not parsed.quiet:
+            eprint(f"[dry-run] atenção: você escreveu há {act['minutes_ago']:g} min; o envio real exigiria --force")
+        return
+    if not act["known_me"]:
+        eprint("aviso: não consegui identificar seu nome no xteams; guarda de mensagem recente não aplicada")
+        return
+    if not act["recent_own"] or parsed.force:
+        return
+    eprint(f"atenção: você escreveu nesta conversa há {act['minutes_ago']:g} min (janela de {window} min).")
+    if act["others_after"]:
+        eprint(f"  {act['others_after']} mensagem(ns) de outras pessoas depois da sua.")
+    eprint("  Pode haver uma conversa ao vivo em andamento. Últimas mensagens:")
+    for line in ctxmod.describe_last(act["last"], act["me_name"]):
+        eprint(line)
+    if parsed.no_input or parsed.yes or not sys.stdin.isatty():
+        raise UsageError(
+            "envio abortado pela guarda de mensagem recente. Releia a conversa (`teams chat context`) "
+            "e, se for mesmo enviar, use --force (ou --recent-minutes 0)."
+        )
 
 
 def _graph_status(settings: config.Settings) -> dict:
@@ -515,6 +612,8 @@ def main(argv: list[str] | None = None) -> int:
             _, plan = run_command(parsed, None)  # type: ignore[arg-type]
             if not parsed.quiet:
                 eprint(f"[dry-run] {plan} (nada executado)")
+            if not _uses_graph(parsed, profile, settings):
+                _send_guard(parsed, xbe.find_bin(), settings.timeout)
             return EXIT_OK
 
         if parsed.cmd == "auth":
@@ -562,11 +661,16 @@ def main(argv: list[str] | None = None) -> int:
                 eprint(f"não autenticado: {exc}")
                 return EXIT_AUTH
             if plan is not None:
+                _send_guard(parsed, xbin, settings.timeout)
                 if not _confirmed(plan, parsed):
                     return EXIT_OK
                 data = run_x_write(parsed, xbin, settings.timeout)
         if not (parsed.quiet and fmt == "human"):
-            emit(data, fmt, color)
+            if fmt == "human" and parsed.cmd == "chat" and getattr(parsed, "sub", None) == "context":
+                for line in ctxmod.render_human(data):
+                    print(line)
+            else:
+                emit(data, fmt, color)
         return EXIT_OK
     except UsageError as exc:
         eprint(f"erro de uso: {exc}")
