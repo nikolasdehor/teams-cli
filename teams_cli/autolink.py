@@ -5,8 +5,8 @@ from __future__ import annotations
 import html
 import re
 
-_URL = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
-_TRAILING = ".,;:!?"
+_URL = re.compile(r'https?://[^\s<>"]+', re.IGNORECASE)
+_TRAILING = ".,;:!?'\u201d\u2019\u00bb\u203a"  # inclui aspas tipográficas e guillemets
 _PAIRS = {")": "(", "]": "[", "}": "{"}
 
 

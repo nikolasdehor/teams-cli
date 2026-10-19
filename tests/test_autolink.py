@@ -48,3 +48,17 @@ def test_url_nao_injeta_html():
 
 def test_quebras_de_linha_viram_br():
     assert text_to_html("a\nb\r\nc") == "a<br>b<br>c"
+
+
+def test_apostrofo_no_meio_da_url_e_mantido():
+    out = text_to_html("https://ex.com/people/O'Reilly/profile")
+    assert 'href="https://ex.com/people/O&#x27;Reilly/profile"' in out
+
+
+def test_aspas_finais_ficam_fora_do_link():
+    assert text_to_html("'https://ex.com/p'") == (
+        '&#x27;<a href="https://ex.com/p">https://ex.com/p</a>&#x27;'
+    )
+    for abre, fecha in (("“", "”"), ("«", "»"), ("‘", "’")):
+        out = text_to_html(f"Veja {abre}https://ex.com/path{fecha}")
+        assert out == f'Veja {abre}<a href="https://ex.com/path">https://ex.com/path</a>{fecha}'
