@@ -130,8 +130,9 @@ def test_run_x_reads(fake_x):
     assert data[0]["days"] == "2"
     data, _ = cli.run_x(parse("chat", "messages", "h1", "--limit", "1"), fake_x, 10, "json")
     assert data[0]["format"] == "keep"
+    # humano também lê HTML bruto: os anexos só existem no HTML original
     data, _ = cli.run_x(parse("chat", "messages", "h1", "--limit", "1"), fake_x, 10, "human")
-    assert data[0]["format"] == "markdown"
+    assert data[0]["format"] == "keep" and data[0]["attachments"] == []
 
 
 def test_run_x_send_plans_without_calling():

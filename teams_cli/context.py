@@ -17,6 +17,7 @@ import re
 from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Any, Callable
 
+from . import attachments as att
 from . import xteams as xbe
 
 MAX_WINDOW = 200  # teto do xteams/Teams por chamada (PageSize <= 200)
@@ -256,6 +257,10 @@ def shape_message(m: dict, me_name: str | None, tz: tzinfo) -> dict:
     parsed = parse_content(m.get("content")) if is_real_message(m) else {
         "text": f"[evento {m.get('messagetype')}]", "reply_to": None, "mentions": [],
     }
+    attachments = att.extract_from_xteams(m) if is_real_message(m) else []
+    if str(m.get("messagetype") or "").startswith("RichText/Media_"):
+        # URIObject/JSON de mídia não é texto de gente: troca pelo resumo dos anexos
+        parsed = {**parsed, "text": att.summarize(attachments)}
     arrival, compose = parse_ts(m.get("originalarrivaltime")), parse_ts(m.get("composetime"))
     when = arrival or compose
     author = m.get("imdisplayname") or None
@@ -269,6 +274,7 @@ def shape_message(m: dict, me_name: str | None, tz: tzinfo) -> dict:
         "text": parsed["text"],
         "reply_to": parsed["reply_to"],
         "mentions": parsed["mentions"],
+        "attachments": attachments,
         "anomalies": [],
         "_when": when,
     }
@@ -357,6 +363,7 @@ def build_context(
     guard_minutes: int = DEFAULT_GUARD_MINUTES,
     resolve: bool = True,
     now: datetime | None = None,
+    fill_sizes: Callable[[list[dict]], None] | None = None,
 ) -> dict:
     now = now or datetime.now(timezone.utc)
     tz = get_tz(tz_name)
@@ -375,6 +382,10 @@ def build_context(
     flag_time_anomalies(shaped, now)
     summary = summarize(shaped, now, guard_minutes, len(msgs))
     shown = shaped[-limit:] if limit else []
+    if fill_sizes:
+        for item in shown:
+            if item["attachments"]:
+                fill_sizes(item["attachments"])
     for item in shaped:
         item.pop("_when", None)
     out_msgs = shown
@@ -472,6 +483,10 @@ def render_human(ctx: dict) -> list[str]:
             lines.append(f"    {ln}")
         if m["mentions"]:
             lines.append(f"    menciona: {', '.join(m['mentions'])}")
+        for a in m.get("attachments") or []:
+            lines.append(f"    anexo: {att.describe(a)}")
+            if a["kind"] == "card" and a.get("text") and a["text"] != m["text"]:
+                lines.extend(f"      | {t}" for t in a["text"].split("\n")[:12])
         for a in m["anomalies"]:
             lines.append(f"    ! {a}")
     lines.append("")
