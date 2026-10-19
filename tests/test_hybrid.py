@@ -145,7 +145,10 @@ def test_run_x_send_plans_without_calling():
 
 def test_run_x_write(fake_x):
     out = cli.run_x_write(parse("chat", "send", "h1", "--message", "oi"), fake_x, 10)
-    assert out == {"id": "m9", "conversation": "h1", "content": "oi", "format": "markdown"}
+    assert out == {"id": "m9", "conversation": "h1", "content": "oi", "format": "html"}
+    out = cli.run_x_write(parse("chat", "send", "h1", "--message", "a https://x.io:81/p."), fake_x, 10)
+    assert out["content"] == 'a <a href="https://x.io:81/p">https://x.io:81/p</a>.'
+    assert out["format"] == "html"
     out = cli.run_x_write(parse("channel", "send", "t", "c", "--message", "<b>x</b>", "--html"), fake_x, 10)
     assert out["format"] == "html"
 

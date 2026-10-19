@@ -124,6 +124,7 @@ Consumidores (scripts, vigias) devem guardar o último `sequenceId` visto, não 
 - Escrita pede confirmação em terminal interativo; sem TTY exige `--yes`.
 - `--message -` lê o texto do stdin; `--message-file` lê de arquivo.
 - `chat send --to EMAIL` (Graph) usa o 1:1 existente ou cria um novo.
+- Texto puro (sem `--html`) é enviado como HTML seguro: caracteres especiais escapados, URLs http(s) viram links clicáveis e quebras de linha viram `<br>`. Com `--html` o conteúdo vai como veio.
 
 ## Exit codes
 
