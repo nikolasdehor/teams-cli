@@ -144,7 +144,7 @@ def test_channel_send_payload():
     _, plan = cli.run_command(parsed, g)
     assert "oi" not in plan and "chars" in plan
     cli.run_write(parsed, g)
-    assert t.calls[0][3] == {"body": {"contentType": "text", "content": "oi"}}
+    assert t.calls[0][3] == {"body": {"contentType": "html", "content": "oi"}}
 
 
 def test_chat_send_to_resolves_or_creates():
@@ -382,3 +382,24 @@ def test_main_dry_run_no_auth_needed(monkeypatch, capsys, fake_msal):
     rc = cli.main(["chat", "send", "--to", "a@x.com", "--message", "oi", "--dry-run"])
     assert rc == 0
     assert "dry-run" in capsys.readouterr().err
+
+
+def test_send_texto_puro_vira_html_com_link():
+    t = FakeTransport({("POST", "/teams/t/channels/c/messages"): (201, {"id": "m"})})
+    g = Graph("t", request_fn=t)
+    parsed = parse("channel", "send", "t", "c", "--message", "veja https://a.io:8080/x, ok\n<b>")
+    cli.run_write(parsed, g)
+    assert t.calls[0][3] == {
+        "body": {
+            "contentType": "html",
+            "content": 'veja <a href="https://a.io:8080/x">https://a.io:8080/x</a>, ok<br>&lt;b&gt;',
+        }
+    }
+
+
+def test_send_html_explicito_nao_e_alterado():
+    t = FakeTransport({("POST", "/teams/t/channels/c/messages"): (201, {"id": "m"})})
+    g = Graph("t", request_fn=t)
+    parsed = parse("channel", "send", "t", "c", "--message", "<b>https://a.io</b>", "--html")
+    cli.run_write(parsed, g)
+    assert t.calls[0][3] == {"body": {"contentType": "html", "content": "<b>https://a.io</b>"}}

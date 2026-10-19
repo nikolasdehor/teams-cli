@@ -12,6 +12,7 @@ from urllib.parse import quote
 from . import __version__, auth, config
 from . import context as ctxmod
 from . import xteams as xbe
+from .autolink import text_to_html
 from .graph import AuthExpired, Forbidden, Graph, GraphError, NotFound
 from .output import emit, eprint, unwrap_collection
 
@@ -193,6 +194,13 @@ def _read_text(parsed: argparse.Namespace) -> str:
     return text.strip()
 
 
+def _body(parsed: argparse.Namespace, text: str) -> tuple[str, str]:
+    """--html vale como veio; texto puro vira HTML seguro com URLs clicáveis."""
+    if parsed.html:
+        return "html", text
+    return "html", text_to_html(text)
+
+
 def _check_limit(value: int, name: str, lo: int, hi: int) -> int:
     if not lo <= value <= hi:
         raise UsageError(f"--{name} fora do intervalo {lo}-{hi}")
@@ -239,7 +247,8 @@ def _attach_file(graph: Graph, path_str: str) -> dict:
 
 def _send_payload(parsed: argparse.Namespace, graph: Graph | None) -> tuple[dict, str]:
     text = _read_text(parsed)
-    payload: dict = {"body": {"contentType": "html" if parsed.html else "text", "content": text}}
+    content_type, content = _body(parsed, text)
+    payload: dict = {"body": {"contentType": content_type, "content": content}}
     extra = ""
     if parsed.file:
         if graph is None:  # dry-run: valida o arquivo sem subir
@@ -484,9 +493,8 @@ def run_x_write(parsed: argparse.Namespace, xbin: str | None, timeout: float) ->
         conv = parsed.chat_id
     if conv is None:
         raise UsageError(f"escrita não suportada via xteams: {cmd} {sub}")
-    args = ["message", "new", conv, "--content", _read_text(parsed)]
-    if parsed.html:
-        args += ["-I", "html"]
+    _, content = _body(parsed, _read_text(parsed))
+    args = ["message", "new", conv, "--content", content, "-I", "html"]
     return xbe.run(xbin, args, timeout)
 
 
