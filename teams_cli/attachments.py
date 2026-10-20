@@ -138,7 +138,7 @@ def card_text(card: Any, _depth: int = 0) -> str:
         elif typ == "Media" and node.get("altText"):
             lines.append(f"[mídia: {node['altText']}]")
         elif typ == "ColumnSet":
-            for col in node.get("columns", []):
+            for col in _as_list(node.get("columns")):
                 walk(col, depth + 1)
         for key in ("body", "items", "columns"):
             if typ != "ColumnSet" and isinstance(node.get(key), list):

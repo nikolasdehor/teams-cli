@@ -411,3 +411,9 @@ def test_dry_run_reports_text_cards_as_downloadable(env, capsys, monkeypatch):
     monkeypatch.setattr(cli.att, "extract", lambda m, engine: [card])
     rc, out, _ = run(capsys, "chat", "download", "c1", "--out", str(env / "d"), "--message", "101", "--dry-run", "--json")
     assert rc == cli.EXIT_OK and json.loads(out)[0]["reason"] is None
+
+
+@pytest.mark.parametrize("value", ["nan", "inf"])
+def test_download_rejects_non_finite_max_mb(env, capsys, value):
+    rc, _, _ = run(capsys, "chat", "download", "c1", "--out", str(env / "n"), "--max-mb", value)
+    assert rc == cli.EXIT_USAGE

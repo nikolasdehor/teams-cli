@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import html
+import math
 import re
 import sys
 from datetime import datetime, timedelta, timezone
@@ -760,7 +761,7 @@ def _fetch_for_download(parsed, xbin, timeout, graph: Graph | None) -> tuple[lis
 
 
 def run_download(parsed: argparse.Namespace, profile: config.Profile, settings: config.Settings) -> tuple[list[dict], int]:
-    if parsed.max_mb <= 0:
+    if not math.isfinite(parsed.max_mb) or parsed.max_mb <= 0:
         raise UsageError("--max-mb deve ser maior que 0")
     frames = _check_limit(parsed.frames, "frames", 0, 24)
     since = parse_since(parsed.all_since) if parsed.all_since else None

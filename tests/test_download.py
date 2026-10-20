@@ -364,3 +364,11 @@ def test_malformed_redirect_is_a_per_attachment_error(tmp_path):
     net = Net({"https://us-api.asm.skype.com/": R(302, headers={"Location": "https://["})})
     res = mk(tmp_path, net).download(ams(), "1", 1)
     assert res["status"] == "error" and "malformada" in res["reason"]
+
+
+def test_open_race_does_not_delete_file_from_other_download(tmp_path, monkeypatch):
+    other = tmp_path / "1_01_imagem.png"
+    monkeypatch.setattr(dl, "unique_dest", lambda out, name: other)
+    other.write_bytes(b"do outro processo")  # o outro download criou entre unique_dest e open
+    res = mk(tmp_path, Net({"https://us-api.asm.skype.com/": R(200, PNG)})).download(ams(), "1", 1)
+    assert res["status"] == "error" and other.read_bytes() == b"do outro processo"

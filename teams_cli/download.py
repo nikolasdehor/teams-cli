@@ -346,8 +346,9 @@ class Downloader:
                     if len(head) >= 32:
                         break
                 name, sniffed = final_name(base, a["kind"], head)
-                dest = unique_dest(self.out_dir, f"{prefix}_{name}")
-                fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+                cand = unique_dest(self.out_dir, f"{prefix}_{name}")
+                fd = os.open(cand, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+                dest = cand  # só apaga em erro o arquivo que este processo criou
                 total = 0
                 with os.fdopen(fd, "wb") as fh:
                     for chunk in _chain(head, it):

@@ -235,3 +235,8 @@ def test_card_text_tolerates_null_collections():
     card = {"type": "AdaptiveCard", "body": [{"type": "RichTextBlock", "inlines": None},
                                              {"type": "FactSet", "facts": None}, {"type": "TextBlock", "text": "ok"}]}
     assert att.card_text(card) == "ok"
+
+
+def test_card_text_tolerates_null_columns():
+    assert att.card_text({"type": "AdaptiveCard", "body": [{"type": "ColumnSet", "columns": None},
+                                                           {"type": "TextBlock", "text": "ok"}]}) == "ok"
