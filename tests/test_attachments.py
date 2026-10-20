@@ -224,3 +224,8 @@ def test_each_unmatched_placeholder_is_kept():
     html = f'<a href="{SP_DOC}">Plano Q4.docx</a><attachment id="p1"></attachment><attachment id="p2"></attachment>'
     kinds = sorted(a["kind"] for a in att.extract_from_xteams(xmsg(html)))
     assert kinds == ["file", "unknown"]
+
+
+def test_infinite_image_dimensions_are_ignored():
+    (img,) = att.extract_from_xteams(xmsg(f'<img src="{AMS}" width="1e309" height="-1e309">'))
+    assert img["width"] is None and img["height"] is None

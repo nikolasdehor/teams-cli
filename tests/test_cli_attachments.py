@@ -11,6 +11,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from teams_cli import attachments as att_mod
 from teams_cli import auth, cli, config
 from teams_cli import download as dl
 from teams_cli import xteams as xbe
@@ -398,3 +399,15 @@ def test_unwrap_collection_accepts_odata_context():
     from teams_cli.output import unwrap_collection
     assert unwrap_collection({"@odata.context": "x", "@odata.count": 1, "value": [{"id": 1}]}) == [{"id": 1}]
     assert unwrap_collection({"value": [], "outra": 1}) == {"value": [], "outra": 1}
+
+
+def test_date_only_since_is_local_midnight():
+    from datetime import datetime
+    assert cli.parse_since("2026-10-19") == datetime(2026, 10, 19).astimezone()
+
+
+def test_dry_run_reports_text_cards_as_downloadable(env, capsys, monkeypatch):
+    card = att_mod._att("1", id="card-1", kind="card", source="card", text="olá")
+    monkeypatch.setattr(cli.att, "extract", lambda m, engine: [card])
+    rc, out, _ = run(capsys, "chat", "download", "c1", "--out", str(env / "d"), "--message", "101", "--dry-run", "--json")
+    assert rc == cli.EXIT_OK and json.loads(out)[0]["reason"] is None

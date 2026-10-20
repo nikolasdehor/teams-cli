@@ -700,10 +700,8 @@ def parse_since(value: str, now: datetime | None = None) -> datetime:
     when = ctxmod.parse_ts(value.strip())
     if when is None:
         raise UsageError(f"--all-since inválido ({value}): use 30m, 2h, 3d ou AAAA-MM-DDTHH:MM")
-    if "T" in value or " " in value or len(value) > 10:
-        naive = not re.search(r"(Z|[+-]\d\d:?\d\d)$", value.strip())
-        if naive:
-            return when.replace(tzinfo=None).astimezone()
+    if not re.search(r"(Z|[+-]\d\d:?\d\d)$", value.strip()):  # sem fuso (inclusive só a data) = hora local
+        return when.replace(tzinfo=None).astimezone()
     return when
 
 
@@ -801,7 +799,8 @@ def run_download(parsed: argparse.Namespace, profile: config.Profile, settings: 
             results.append({
                 "message_id": mid, "attachment_id": a["id"], "kind": a["kind"], "name": a["name"], "path": None,
                 "bytes": a["size"], "mime": a["mime"], "status": "dry-run",
-                "reason": None if a["downloadable"] else (a["note"] or "não baixável"),
+                "reason": None if a["downloadable"] or (a["kind"] == "card" and a.get("text"))
+                else (a["note"] or "não baixável"),  # cartão com texto vira .txt no download real
                 "frames": [], "sprite": None, "audio": None,
             })
         return results, EXIT_OK

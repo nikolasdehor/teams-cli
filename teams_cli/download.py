@@ -171,13 +171,17 @@ class Downloader:
         headers = {"Authorization": auth} if auth else {}
         current = url
         for hop in range(MAX_REDIRECTS + 1):
-            parsed = urlparse(current)
-            if parsed.scheme != "https" or not parsed.hostname:
+            try:
+                parsed = urlparse(current)
+                hostname = parsed.hostname
+            except ValueError:
+                raise DownloadError("URL malformada recusada")
+            if parsed.scheme != "https" or not hostname:
                 raise DownloadError("URL não https recusada")
             if parsed.username or parsed.password:
                 raise DownloadError("URL com credenciais recusada")
             # shortcut: checa o DNS antes do GET (DNS rebinding ainda passa), fixar o IP num HTTPAdapter se --external virar padrão
-            if public_only and not self._host_ok(parsed.hostname):
+            if public_only and not self._host_ok(hostname):
                 raise DownloadError("host externo recusado (não é um endereço público)")
             try:
                 resp = self._request(
@@ -187,7 +191,10 @@ class Downloader:
             except Exception as exc:  # noqa: BLE001
                 raise DownloadError(f"falha de rede: {type(exc).__name__}")
             if resp.status_code in (301, 302, 303, 307, 308) and resp.headers.get("Location"):
-                nxt = urljoin(current, resp.headers["Location"])
+                try:
+                    nxt = urljoin(current, resp.headers["Location"])
+                except ValueError:
+                    raise DownloadError("redirect para URL malformada recusado")
                 close = getattr(resp, "close", None)
                 if close:
                     close()

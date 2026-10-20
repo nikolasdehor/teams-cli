@@ -240,7 +240,7 @@ def _is_emoji(img: dict) -> bool:
 def _int(value: Any) -> int | None:
     try:
         return int(float(value))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):  # "1e309" vira inf
         return None
 
 

@@ -356,3 +356,9 @@ def test_sizes_reads_length_of_graph_hosted_images(tmp_path):
     a = att._att("9", id="h-aGk=", kind="image", source="graph-hosted", url=url, downloadable=True)
     mk(tmp_path, Net({url: R(200, headers={"Content-Length": "1234"})})).sizes([a])
     assert a["size"] == 1234
+
+
+def test_malformed_redirect_is_a_per_attachment_error(tmp_path):
+    net = Net({"https://us-api.asm.skype.com/": R(302, headers={"Location": "https://["})})
+    res = mk(tmp_path, net).download(ams(), "1", 1)
+    assert res["status"] == "error" and "malformada" in res["reason"]
