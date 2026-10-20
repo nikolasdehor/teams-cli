@@ -354,3 +354,23 @@ def test_download_ignores_external_images_unless_flag(env, capsys, monkeypatch):
     Path(env / "msgs.json").write_text(json.dumps(msgs))
     rc, out, err = run(capsys, "chat", "download", "c1", "--out", str(env / "e1"), "--message", "104", "--json")
     assert json.loads(out) == [] and "1 imagem(ns) externa(s) ignorada(s)" in err
+
+
+def test_graph_download_follows_next_link_up_to_limit():
+    page = lambda ids: [{"id": i, "body": {"contentType": "html", "content": ""}} for i in ids]
+    g = graph_with({
+        ("GET", "/me/chats/c1/messages"): (200, {"value": page(range(50)),
+                                                  "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/chats/c1/messages?$skiptoken=x"}),
+        ("GET", "/me/chats/c1/messages?$skiptoken=x"): (200, {"value": page(range(50, 100)),
+                                                               "@odata.nextLink": "https://evil.example/steal"}),
+    })
+    parsed = parse("chat", "download", "c1", "--out", "x", "--limit", "60", "--graph")
+    msgs, engine = cli._fetch_for_download(parsed, None, 5, g)
+    assert engine == "graph" and len(msgs) == 60
+
+
+def test_download_out_that_is_a_file_is_usage_error(env, capsys):
+    bad = env / "arquivo"
+    bad.write_text("x")
+    rc, _, err = run(capsys, "chat", "download", "c1", "--out", str(bad / "sub"))
+    assert rc == cli.EXIT_USAGE and "--out" in err

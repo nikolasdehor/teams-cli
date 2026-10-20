@@ -176,6 +176,7 @@ class Downloader:
                 raise DownloadError("URL não https recusada")
             if parsed.username or parsed.password:
                 raise DownloadError("URL com credenciais recusada")
+            # shortcut: checa o DNS antes do GET (DNS rebinding ainda passa), fixar o IP num HTTPAdapter se --external virar padrão
             if public_only and not self._host_ok(parsed.hostname):
                 raise DownloadError("host externo recusado (não é um endereço público)")
             try:
@@ -377,13 +378,17 @@ def ffmpeg_available() -> bool:
     return bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
 
 
+# só arquivo local e só demuxers de mídia: playlist (hls/concat) disfarçada de .mp4 não lê arquivos do disco
+FFMPEG_SAFE = ["-protocol_whitelist", "file", "-format_whitelist", "mov,mp4,matroska,webm,avi,flv,mpegts,ogg,wav,mp3,gif,asf"]
+
+
 def _run(cmd: list[str], timeout: float = 300.0) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
 def probe_duration(path: Path) -> float | None:
     try:
-        proc = _run(["ffprobe", "-v", "error", "-protocol_whitelist", "file", "-show_entries", "format=duration", "-of",
+        proc = _run(["ffprobe", "-v", "error", *FFMPEG_SAFE, "-show_entries", "format=duration", "-of",
                      "default=nw=1:nk=1", str(path)], 60)
         return float(proc.stdout.strip())
     except (OSError, ValueError, subprocess.TimeoutExpired):
@@ -400,7 +405,7 @@ def extract_frames(path: Path, n: int, width: int = 960) -> tuple[list[str], str
     for i in range(n):
         t = dur * (i + 0.5) / n
         out = Path(f"{stem}_frame_{i + 1:02d}.jpg")
-        proc = _run(["ffmpeg", "-v", "error", "-y", "-protocol_whitelist", "file", "-ss", f"{t:.3f}", "-i", str(path), "-frames:v", "1",
+        proc = _run(["ffmpeg", "-v", "error", "-y", *FFMPEG_SAFE, "-ss", f"{t:.3f}", "-i", str(path), "-frames:v", "1",
                      "-vf", f"scale={width}:-2", "-q:v", "3", str(out)], 120)
         if proc.returncode == 0 and out.exists():
             frames.append(str(out))
@@ -409,7 +414,7 @@ def extract_frames(path: Path, n: int, width: int = 960) -> tuple[list[str], str
         cols = min(len(frames), 4)
         rows = -(-len(frames) // cols)
         out = Path(f"{stem}_sprite.jpg")
-        proc = _run(["ffmpeg", "-v", "error", "-y", "-protocol_whitelist", "file", "-ss", "0", "-i", str(path), "-vf",
+        proc = _run(["ffmpeg", "-v", "error", "-y", *FFMPEG_SAFE, "-ss", "0", "-i", str(path), "-vf",
                      f"fps={n}/{dur:.3f},scale=480:-2,tile={cols}x{rows}", "-frames:v", "1", "-q:v", "3",
                      str(out)], 300)
         if proc.returncode == 0 and out.exists():
@@ -422,7 +427,7 @@ def extract_frames(path: Path, n: int, width: int = 960) -> tuple[list[str], str
 def extract_audio(path: Path) -> str:
     """Trilha de áudio mono 16 kHz em .m4a (bom para transcrever)."""
     out = Path(f"{path.with_suffix('')}_audio.m4a")
-    proc = _run(["ffmpeg", "-v", "error", "-y", "-protocol_whitelist", "file", "-i", str(path), "-vn", "-ac", "1", "-ar", "16000",
+    proc = _run(["ffmpeg", "-v", "error", "-y", *FFMPEG_SAFE, "-i", str(path), "-vn", "-ac", "1", "-ar", "16000",
                  "-c:a", "aac", "-b:a", "48k", str(out)], 900)
     if proc.returncode != 0 or not out.exists():
         raise DownloadError("vídeo sem trilha de áudio ou ffmpeg falhou")

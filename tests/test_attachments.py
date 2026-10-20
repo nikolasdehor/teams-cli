@@ -205,3 +205,22 @@ def test_graph_relative_hosted_image_is_resolved_against_chat_message():
     (img,) = att.extract_from_graph(msg)
     assert img["source"] == "graph-hosted" and img["downloadable"]
     assert img["url"] == "https://graph.microsoft.com/v1.0/chats/19:abc@thread.v2/messages/9/hostedContents/aGk=/$value"
+
+
+def test_graph_relative_hosted_image_in_channel_message():
+    msg = {"id": "9", "chatId": None, "channelIdentity": {"teamId": "t1", "channelId": "19:c@thread.tacv2"},
+           "body": {"contentType": "html", "content": '<img src="../hostedContents/aGk=/$value">'}}
+    (img,) = att.extract_from_graph(msg)
+    assert img["url"] == "https://graph.microsoft.com/v1.0/teams/t1/channels/19:c@thread.tacv2/messages/9/hostedContents/aGk=/$value"
+
+
+def test_malformed_urls_do_not_abort_extraction():
+    html = '<a href="https://[">x</a><img src="https://[">' + f'<img src="{AMS}">'
+    (img,) = att.extract_from_xteams(xmsg(html))
+    assert img["source"] == "ams"
+
+
+def test_each_unmatched_placeholder_is_kept():
+    html = f'<a href="{SP_DOC}">Plano Q4.docx</a><attachment id="p1"></attachment><attachment id="p2"></attachment>'
+    kinds = sorted(a["kind"] for a in att.extract_from_xteams(xmsg(html)))
+    assert kinds == ["file", "unknown"]

@@ -242,7 +242,10 @@ def _name_from_share_url(url: str) -> str | None:
 
 def _from_link(message_id: Any, link: dict) -> dict | None:
     href = link["attrs"]["href"]
-    parsed = urlparse(href)
+    try:
+        parsed = urlparse(href)
+    except ValueError:  # URL malformada numa mensagem não derruba a leitura
+        return None
     if parsed.scheme != "https" or not is_share_host(parsed.hostname or ""):
         return None
     letter = re.match(r"^/:([a-z]):/", parsed.path)
@@ -334,7 +337,7 @@ def _from_img(message_id: Any, img: dict, graph_base: str | None = None) -> dict
             message_id, id="h-" + hosted.group(1), kind="image", name=alt, width=w, height=h,
             source="graph-hosted", url=src, downloadable=True,
         )
-    if urlparse(src).scheme == "https":
+    if src.lower().startswith("https://") and host:
         return _att(
             message_id, id="x-" + _short_hash(src), kind="image", name=alt, width=w, height=h,
             source="external", url=src, downloadable=True,
@@ -409,8 +412,14 @@ def extract_from_xteams(msg: dict) -> list[dict]:
             out.append(item)
     out.extend(_from_properties(mid, msg.get("properties")))
     known = {a["id"] for a in out}
+    # cada cartão/arquivo reconhecido cobre um placeholder; os que sobram viram "unknown"
+    spare = sum(1 for a in out if a["kind"] in ("card", "file") and a["id"] not in scan.placeholders)
     for ph in scan.placeholders:
-        if ph not in known and not any(a["kind"] in ("card", "file") for a in out):
+        if ph in known:
+            continue
+        if spare:
+            spare -= 1
+        else:
             out.append(_att(
                 mid, id="att-" + ph, kind="unknown", source="none",
                 note="anexo referenciado sem detalhes no xteams (cartão de bot ou arquivo); use --graph para resolver",
@@ -424,9 +433,12 @@ def extract_from_graph(msg: dict, chat_path: str | None = None) -> list[dict]:
     body = (msg.get("body") or {})
     html_body = body.get("content") if body.get("contentType") == "html" else ""
     out: list[dict] = []
-    graph_base = (
-        f"https://graph.microsoft.com/v1.0/chats/{msg['chatId']}/messages/{mid}" if msg.get("chatId") and mid else None
-    )
+    chan = msg.get("channelIdentity") or {}
+    graph_base = None
+    if mid and msg.get("chatId"):
+        graph_base = f"https://graph.microsoft.com/v1.0/chats/{msg['chatId']}/messages/{mid}"
+    elif mid and chan.get("teamId") and chan.get("channelId"):
+        graph_base = f"https://graph.microsoft.com/v1.0/teams/{chan['teamId']}/channels/{chan['channelId']}/messages/{mid}"
     for a in msg.get("attachments") or []:
         if not isinstance(a, dict):
             continue

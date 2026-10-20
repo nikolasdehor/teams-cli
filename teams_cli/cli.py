@@ -18,7 +18,7 @@ from . import context as ctxmod
 from . import download as dl
 from . import xteams as xbe
 from .autolink import text_to_html
-from .graph import AuthExpired, Forbidden, Graph, GraphError, NotFound
+from .graph import BASE as GRAPH_BASE, AuthExpired, Forbidden, Graph, GraphError, NotFound
 from .output import emit, eprint, unwrap_collection
 
 EXIT_OK = 0
@@ -739,7 +739,14 @@ def _fetch_for_download(parsed, xbin, timeout, graph: Graph | None) -> tuple[lis
             data = graph.get(f"/me/chats/{_q(parsed.chat_id)}/messages/{_q(parsed.message)}")
             return ([data] if isinstance(data, dict) else []), "graph"
         data = graph.get(f"/me/chats/{_q(parsed.chat_id)}/messages", params={"$top": min(limit, 50)})
-        return list(unwrap_collection(data) or []), "graph"
+        msgs = list(unwrap_collection(data) or [])
+        nxt = data.get("@odata.nextLink") if isinstance(data, dict) else None
+        # Graph devolve no máximo 50 por página; o token só segue nextLink do próprio Graph
+        while nxt and nxt.startswith(GRAPH_BASE + "/") and len(msgs) < limit:
+            data = graph.get(nxt[len(GRAPH_BASE):])
+            msgs.extend(unwrap_collection(data) or [])
+            nxt = data.get("@odata.nextLink") if isinstance(data, dict) else None
+        return msgs[:limit], "graph"
     if parsed.message:
         try:
             one = xbe.run(xbin, ["message", "read", parsed.chat_id, parsed.message, "-O", "keep"], timeout)
@@ -798,7 +805,10 @@ def run_download(parsed: argparse.Namespace, profile: config.Profile, settings: 
                 "frames": [], "sprite": None, "audio": None,
             })
         return results, EXIT_OK
-    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise UsageError(f"não consegui criar --out {out_dir}: {exc.strerror or exc}")
     if graph is not None:
         gtok = graph.token
         downloader = dl.Downloader(
