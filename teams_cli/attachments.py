@@ -161,7 +161,7 @@ def _cards_from_swift(b64: str) -> tuple[str, list[Any]]:
     except (binascii.Error, ValueError):
         return "", []
     cards = []
-    for a in data.get("attachments", []) if isinstance(data, dict) else []:
+    for a in _as_list(data.get("attachments")) if isinstance(data, dict) else []:
         content = a.get("content") if isinstance(a, dict) else None
         if isinstance(content, str):
             try:

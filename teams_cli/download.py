@@ -33,6 +33,7 @@ DEFAULT_MAX_MB = 50
 MAX_REDIRECTS = 5
 CHUNK = 64 * 1024
 MAX_NAME = 100
+MAX_NAME_BYTES = 180
 GRAPH = "https://graph.microsoft.com/v1.0"
 
 
@@ -61,7 +62,11 @@ def safe_filename(name: str | None, fallback: str = "arquivo", max_len: int = MA
         ext = "." + ext
     if len(ext) > 12:
         stem, ext = text, ""
-    stem = stem[: max(max_len - len(ext), 8)].rstrip(" .") or fallback
+    stem = stem[: max(max_len - len(ext), 8)]
+    # limite real do disco é em bytes (ext4: 255); sobra espaço para o prefixo e o sufixo -N
+    while len((stem + ext).encode("utf-8")) > MAX_NAME_BYTES and len(stem) > 8:
+        stem = stem[:-1]
+    stem = stem.rstrip(" .") or fallback
     return stem + ext
 
 

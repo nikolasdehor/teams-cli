@@ -372,3 +372,8 @@ def test_open_race_does_not_delete_file_from_other_download(tmp_path, monkeypatc
     other.write_bytes(b"do outro processo")  # o outro download criou entre unique_dest e open
     res = mk(tmp_path, Net({"https://us-api.asm.skype.com/": R(200, PNG)})).download(ams(), "1", 1)
     assert res["status"] == "error" and other.read_bytes() == b"do outro processo"
+
+
+def test_safe_filename_is_bounded_in_bytes():
+    name = dl.safe_filename("文" * 96 + ".docx")
+    assert name.endswith(".docx") and len(name.encode("utf-8")) <= dl.MAX_NAME_BYTES

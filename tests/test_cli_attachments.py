@@ -417,3 +417,21 @@ def test_dry_run_reports_text_cards_as_downloadable(env, capsys, monkeypatch):
 def test_download_rejects_non_finite_max_mb(env, capsys, value):
     rc, _, _ = run(capsys, "chat", "download", "c1", "--out", str(env / "n"), "--max-mb", value)
     assert rc == cli.EXIT_USAGE
+
+
+@pytest.mark.parametrize(("env_profile", "allowed"), [(None, True), ("outra-conta", False)])
+def test_xteams_token_fallback_follows_resolved_profile(env, capsys, monkeypatch, tmp_path, env_profile, allowed):
+    seen = []
+
+    def fake_token(profile, xbin, timeout, allow_xteams):
+        seen.append(allow_xteams)
+        raise auth.AuthError("sem sessão MSAL")
+    monkeypatch.setattr(cli, "_graph_token", fake_token)
+    if env_profile:
+        monkeypatch.setenv("TEAMS_PROFILE", env_profile)
+    else:
+        monkeypatch.delenv("TEAMS_PROFILE", raising=False)
+    img = tmp_path / "p.png"
+    img.write_bytes(PNG)
+    rc, _, _ = run(capsys, "chat", "send", "h1", "--message", "oi", "--file", str(img), "--yes")
+    assert rc == cli.EXIT_AUTH and seen == [allowed]

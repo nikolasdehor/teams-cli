@@ -944,7 +944,7 @@ def main(argv: list[str] | None = None) -> int:
         if _uses_graph(parsed, profile, settings):
             try:
                 token = _graph_token(
-                    profile, xbe.find_bin(), settings.timeout, allow_xteams=parsed.profile is None and not parsed.graph
+                    profile, xbe.find_bin(), settings.timeout, allow_xteams=profile.name == settings.default_profile and not parsed.graph
                 )
             except (auth.AuthError, xbe.XteamsError) as exc:
                 eprint(f"não autenticado: {exc}")
