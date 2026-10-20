@@ -350,3 +350,24 @@ def test_context_rejects_unknown_timezone(fake_x, monkeypatch, tmp_path, capsys)
     use_messages(monkeypatch, tmp_path, [msg(1, "Ana", "<p>a</p>", 1)])
     assert cli.main(["chat", "context", GROUP, "--no-emails", "--tz", "America/Nao_Existe"]) == cli.EXIT_USAGE
     assert "fuso desconhecido" in capsys.readouterr().err
+
+
+def test_context_reads_raw_html_from_xteams(monkeypatch):
+    calls = []
+
+    def fake_run(xbin, args, timeout):
+        calls.append(args)
+        return [] if args[:2] == ["message", "list"] else {}
+
+    monkeypatch.setattr(ctx.xbe, "run", fake_run)
+    ctx.build_context("x", GROUP, timeout=10, resolve=False)
+    (lst,) = [a for a in calls if a[:2] == ["message", "list"]]
+    assert lst[-2:] == ["-O", "keep"]
+
+
+def test_send_guard_reads_raw_html_from_xteams(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ctx.xbe, "run", lambda xbin, args, timeout: calls.append(args) or ([] if args[:2] == ["message", "list"] else {}))
+    ctx.recent_activity("x", GROUP, 5, 10)
+    (lst,) = [a for a in calls if a[:2] == ["message", "list"]]
+    assert lst[-2:] == ["-O", "keep"]

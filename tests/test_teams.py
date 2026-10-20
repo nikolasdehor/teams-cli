@@ -93,7 +93,7 @@ def test_channel_messages_quotes_ids():
     t = FakeTransport({("GET", "/teams/a%3Ab/channels/c%2Fd/messages"): (200, {"value": [{"id": "m"}]})})
     g = Graph("t", request_fn=t)
     data, _ = cli.run_command(parse("channel", "messages", "a:b", "c/d", "--limit", "5"), g)
-    assert data == [{"id": "m"}]
+    assert data == [{"id": "m", "attachments": []}]
     assert t.calls[0][2] == {"$top": 5}
 
 
@@ -106,7 +106,7 @@ def test_chats_and_chat_messages():
     data, _ = cli.run_command(parse("chats", "--limit", "3"), g)
     assert data == [{"id": "h1"}]
     data, _ = cli.run_command(parse("chat", "messages", "h1"), g)
-    assert data == [{"id": "m1"}]
+    assert data == [{"id": "m1", "attachments": []}]
 
 
 def test_meetings_list_builds_window():
@@ -220,11 +220,12 @@ def test_file_attach_flow(tmp_path):
     assert sent["attachments"][0]["id"] == "d1"
 
 
-def test_file_missing_and_too_big(tmp_path):
+def test_file_missing_and_too_big(tmp_path, monkeypatch):
     with pytest.raises(cli.UsageError):
         cli.run_command(parse("chat", "send", "h1", "--message", "x", "--file", "/nao-existe"), graph_with({}))
     big = tmp_path / "big.bin"
-    big.write_bytes(b"0" * (4 * 1024 * 1024 + 1))
+    big.write_bytes(b"0" * 2048)
+    monkeypatch.setattr(cli, "MAX_UPLOAD_BYTES", 1024)
     with pytest.raises(cli.UsageError):
         cli._attach_file(graph_with({}), str(big))
 

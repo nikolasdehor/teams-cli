@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from typing import Any
 
 
@@ -89,3 +90,62 @@ def run_auth(xteams: str | None, action: str) -> int:
     except FileNotFoundError:
         raise XteamsNotFound(f"xteams não encontrado: {xteams}")
     return proc.returncode
+
+
+# --- tokens do cache do xteams (para baixar anexos) ---------------------------------
+#
+# O xteams guarda os tokens em ~/.local/state/xteams/token-cache.json. Lemos só o necessário,
+# em memória, e nunca os registramos em log nem os imprimimos. Eles só são enviados a hosts
+# permitidos (ver download.py).
+
+_REFRESH_CMDS = {
+    "skype": ["chat", "list", "-n", "1"],
+    "graph": ["calendar", "upcoming", "-d", "1"],
+}
+_SKEW = 90  # segundos de folga antes de considerar o token vencido
+
+
+def cache_path() -> "os.PathLike[str]":
+    from pathlib import Path
+
+    override = os.environ.get("TEAMS_XTEAMS_CACHE")
+    if override:
+        return Path(override)
+    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(base) / "xteams" / "token-cache.json"
+
+
+def _load_cache() -> dict:
+    try:
+        with open(cache_path(), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        raise XteamsAuthError("não achei o cache de tokens do xteams. Rode `teams auth login`.")
+    return data if isinstance(data, dict) else {}
+
+
+def _pick(data: dict, kind: str) -> tuple[str | None, float]:
+    if kind == "skype":
+        sk = data.get("skype") or {}
+        return sk.get("skype_token"), float(sk.get("expires_at") or 0)
+    entry = (data.get("access_tokens") or {}).get("https://graph.microsoft.com") or {}
+    return entry.get("token"), float(entry.get("expires_at") or 0)
+
+
+def get_token(xteams: str | None, kind: str, timeout: float = 60.0) -> str:
+    """Token vigente do xteams: 'skype' (AMS/imagens) ou 'graph' (OneDrive/SharePoint).
+
+    Se estiver perto de vencer, roda um comando de leitura barato do próprio xteams, que renova.
+    """
+    token, exp = _pick(_load_cache(), kind)
+    if not token or exp - time.time() < _SKEW:
+        try:
+            run(xteams, _REFRESH_CMDS[kind], timeout)
+        except XteamsAuthError:
+            raise
+        except XteamsError:
+            pass
+        token, exp = _pick(_load_cache(), kind)
+    if not token or exp - time.time() < 5:
+        raise XteamsAuthError("token do xteams vencido. Rode `teams auth login`.")
+    return token

@@ -39,6 +39,13 @@ def main(args):
     if args[:2] == ["channel", "list"]:
         out([{"id": "19:c@thread.tacv2", "displayName": "Geral"}])
         return 0
+    if args[:2] == ["message", "read"] and os.environ.get("FAKE_X_MSGS"):
+        found = [m for m in json.load(open(os.environ["FAKE_X_MSGS"])) if m["id"] == args[3]]
+        if not found:
+            sys.stderr.write("Error: message not found\n")
+            return 1
+        out(found[0])
+        return 0
     if args[:2] == ["message", "list"] and os.environ.get("FAKE_X_MSGS"):
         # fixture: devolve as últimas N, na ordem do arquivo (pode vir embaralhada/duplicada)
         n = int(args[args.index("-n") + 1]) if "-n" in args else 20

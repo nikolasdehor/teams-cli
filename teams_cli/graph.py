@@ -7,6 +7,7 @@ from typing import Any, Callable
 import requests
 
 BASE = "https://graph.microsoft.com/v1.0"
+UPLOAD_CHUNK = 13 * 320 * 1024
 
 
 class GraphError(Exception):
@@ -94,5 +95,36 @@ class Graph:
     def post(self, path: str, payload: dict | None = None) -> Any:
         return self.call("POST", path, payload=payload)
 
-    def put_bytes(self, path: str, data: bytes) -> Any:
-        return self.call("PUT", path, raw=data, content_type="application/octet-stream")
+    def put_bytes(self, path: str, data: bytes, params: dict | None = None) -> Any:
+        return self.call("PUT", path, params=params, raw=data, content_type="application/octet-stream")
+
+    def upload_large(self, path: str, fh: Any, total: int) -> Any:
+        """Upload resumível (createUploadSession) em pedaços de 13 x 320 KiB, para arquivos grandes."""
+        sess = self.post(
+            f"{path}:/createUploadSession",
+            {"item": {"@microsoft.graph.conflictBehavior": "rename"}},
+        )
+        url = (sess or {}).get("uploadUrl")
+        if not url:
+            raise GraphError("o Graph não devolveu uploadUrl para o arquivo grande")
+        step, item = UPLOAD_CHUNK, None  # lê um pedaço por vez do disco, nunca o arquivo inteiro
+        for start in range(0, total, step):
+            end = min(start + step, total) - 1
+            try:
+                resp = self._request(
+                    "PUT",
+                    url,
+                    headers={"Content-Range": f"bytes {start}-{end}/{total}"},  # sem Authorization de propósito
+                    data=fh.read(end + 1 - start),
+                    timeout=self.timeout,
+                )
+            except Exception as exc:
+                # a uploadUrl é pré-autenticada: nunca vai para a mensagem de erro
+                raise GraphError(f"falha de rede no upload: {type(exc).__name__}") from None
+            if resp.status_code in (200, 201):
+                item = resp.json()
+            elif resp.status_code != 202:
+                raise GraphError(f"upload falhou no trecho {start}-{end}: HTTP {resp.status_code}")
+        if not item:
+            raise GraphError("upload terminou sem devolver o item")
+        return item
