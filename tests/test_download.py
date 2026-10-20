@@ -319,3 +319,13 @@ def test_post_process_ignores_non_video_and_missing_ffmpeg(monkeypatch):
     res["kind"] = "video"
     dl.post_process_video(res, 3, False)
     assert "ffmpeg" in res["reason"]
+
+
+def test_external_redirect_to_private_host_is_refused(tmp_path):
+    ext = att._att("500", id="x-1", kind="image", name="g", source="external",
+                   url="https://cdn.public.com/a.gif", downloadable=True)
+    net = Net({"https://cdn.public.com/": R(302, headers={"Location": "https://10.0.0.5/admin"}),
+               "https://10.0.0.5/": R(200, PNG)})
+    res = mk(tmp_path, net, allow_external=True).download(ext, "1", 1)
+    assert res["status"] == "error" and "público" in res["reason"]
+    assert [c[0] for c in net.calls] == ["https://cdn.public.com/a.gif"]

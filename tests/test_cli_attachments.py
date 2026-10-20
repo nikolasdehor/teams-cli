@@ -186,6 +186,24 @@ def test_download_without_xteams_session_exits_3(env, capsys, monkeypatch):
     assert rc == cli.EXIT_AUTH and "não autenticado" in err
 
 
+def test_download_graph_without_session_exits_3(env, capsys, monkeypatch):
+    def no_session(*a, **k):
+        raise auth.AuthError("sem sessão MSAL")
+    monkeypatch.setattr(cli, "_graph_token", no_session)
+    rc, _, err = run(capsys, "chat", "download", "c1", "--out", str(env / "g"), "--graph")
+    assert rc == cli.EXIT_AUTH and "não autenticado" in err
+
+
+def test_inline_budget_is_shared_by_all_images(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "MAX_INLINE_BYTES", len(PNG) + 10)
+    a, b = tmp_path / "a.png", tmp_path / "b.png"
+    a.write_bytes(PNG)
+    b.write_bytes(PNG)
+    parsed = parse("chat", "send", "h1", "--message", "x", "--file", str(a), "--file", str(b))
+    plan = cli.run_command(parsed, graph_with({}))[1]
+    assert "imagem inline a.png" in plan and "anexo b.png" in plan
+
+
 def test_download_frames_and_audio_flags_validated(env, capsys):
     rc, _, err = run(capsys, "chat", "download", "c1", "--out", str(env / "v"), "--frames", "99")
     assert rc == cli.EXIT_USAGE

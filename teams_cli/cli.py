@@ -264,7 +264,8 @@ def _resolve_1to1(graph: Graph, email: str) -> str | None:
 INLINE_IMAGES = {
     ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
 }
-MAX_INLINE_BYTES = 3 * 1024 * 1024  # base64 incha 4/3: fica sob o limite de ~4MB do corpo da requisição
+# soma de TODAS as imagens inline da mensagem: base64 incha 4/3 e o Graph limita a requisição inteira a ~4MB
+MAX_INLINE_BYTES = 2_800_000
 SIMPLE_UPLOAD_BYTES = 4 * 1024 * 1024
 MAX_UPLOAD_BYTES = 250 * 1024 * 1024
 _GUID = re.compile(r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}")
@@ -273,6 +274,7 @@ _GUID = re.compile(r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}
 def _plan_files(parsed: argparse.Namespace) -> list[dict]:
     """Valida cada --file e decide: imagem inline (hostedContents) ou anexo do OneDrive."""
     plan = []
+    inline_total = 0
     for raw in parsed.file or []:
         path = Path(raw)
         if not path.is_file():
@@ -281,7 +283,9 @@ def _plan_files(parsed: argparse.Namespace) -> list[dict]:
         if size > MAX_UPLOAD_BYTES:
             raise UsageError(f"{path.name} acima de {MAX_UPLOAD_BYTES // 1024 // 1024}MB")
         mime = INLINE_IMAGES.get(path.suffix.lower())
-        inline = bool(mime) and size <= MAX_INLINE_BYTES and not parsed.as_file
+        inline = bool(mime) and inline_total + size <= MAX_INLINE_BYTES and not parsed.as_file
+        if inline:
+            inline_total += size  # o que estoura o orçamento vai como anexo do OneDrive
         plan.append({"path": path, "size": size, "mime": mime, "inline": inline})
     return plan
 
@@ -984,7 +988,7 @@ def main(argv: list[str] | None = None) -> int:
     except NotFound as exc:
         eprint(f"não encontrado: {exc}")
         return EXIT_FAIL
-    except xbe.XteamsAuthError as exc:
+    except (xbe.XteamsAuthError, auth.AuthError, AuthExpired) as exc:
         eprint(f"não autenticado: {exc}")
         return EXIT_AUTH
     except (GraphError, xbe.XteamsError) as exc:

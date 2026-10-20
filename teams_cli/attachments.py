@@ -56,7 +56,7 @@ def is_share_host(host: str) -> bool:
 
 
 def _short_hash(text: str, n: int = 10) -> str:
-    return hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()[:n]
+    return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:n]
 
 
 def _host(url: str | None) -> str:
@@ -311,7 +311,7 @@ def _from_uriobject(message_id: Any, msg_type: str, uri: dict) -> dict:
                 mime=mime, url=ams_uri or None, note=f"URIObject {typ or '?'} sem URL AMS reconhecida")
 
 
-def _from_img(message_id: Any, img: dict) -> dict | None:
+def _from_img(message_id: Any, img: dict, graph_base: str | None = None) -> dict | None:
     if _is_emoji(img):
         return None
     src = img.get("src", "")
@@ -325,6 +325,10 @@ def _from_img(message_id: Any, img: dict) -> dict | None:
             width=w, height=h, source="ams", url=src, downloadable=True,
         )
     hosted = _GRAPH_HOSTED.search(src)
+    if hosted and not host and graph_base:
+        # o Graph devolve src relativo (../hostedContents/{id}/$value) no corpo da mensagem
+        src = f"{graph_base}/hostedContents/{hosted.group(1)}/$value"
+        host = "graph.microsoft.com"
     if hosted and host == "graph.microsoft.com":
         return _att(
             message_id, id="h-" + hosted.group(1), kind="image", name=alt, width=w, height=h,
@@ -420,6 +424,9 @@ def extract_from_graph(msg: dict, chat_path: str | None = None) -> list[dict]:
     body = (msg.get("body") or {})
     html_body = body.get("content") if body.get("contentType") == "html" else ""
     out: list[dict] = []
+    graph_base = (
+        f"https://graph.microsoft.com/v1.0/chats/{msg['chatId']}/messages/{mid}" if msg.get("chatId") and mid else None
+    )
     for a in msg.get("attachments") or []:
         if not isinstance(a, dict):
             continue
@@ -459,7 +466,7 @@ def extract_from_graph(msg: dict, chat_path: str | None = None) -> list[dict]:
         except Exception:  # noqa: BLE001
             pass
         for img in scan.imgs:
-            item = _from_img(mid, img)
+            item = _from_img(mid, img, graph_base)
             if item:
                 out.append(item)
     return _dedupe(out)

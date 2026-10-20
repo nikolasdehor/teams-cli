@@ -72,7 +72,8 @@ def test_sharepoint_files_videos_folders():
 
 def test_ids_are_stable_across_calls():
     html = f'<a href="{SP_DOC}">Plano Q4.docx</a>'
-    assert att.extract_from_xteams(xmsg(html))[0]["id"] == att.extract_from_xteams(xmsg(html))[0]["id"]
+    first, second = att.extract_from_xteams(xmsg(html)), att.extract_from_xteams(xmsg(html))
+    assert first[0]["id"] == second[0]["id"]
 
 
 def test_call_recording_ready_and_ongoing():
@@ -196,3 +197,11 @@ def test_context_shows_attachments_and_summarizes_media_messages():
     two = ctxmod.shape_message(msgs[1], None, tz)
     assert one["text"] == "veja" and one["attachments"][0]["kind"] == "image"
     assert two["text"].startswith("[cartão]") and "Pipeline verde" in two["text"]
+
+
+def test_graph_relative_hosted_image_is_resolved_against_chat_message():
+    msg = {"id": "9", "chatId": "19:abc@thread.v2",
+           "body": {"contentType": "html", "content": '<img src="../hostedContents/aGk=/$value" alt="x">'}}
+    (img,) = att.extract_from_graph(msg)
+    assert img["source"] == "graph-hosted" and img["downloadable"]
+    assert img["url"] == "https://graph.microsoft.com/v1.0/chats/19:abc@thread.v2/messages/9/hostedContents/aGk=/$value"

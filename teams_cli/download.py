@@ -163,8 +163,11 @@ class Downloader:
         self.timeout = timeout
 
     # -- HTTP com política de hosts --
-    def _get(self, url: str, auth: str | None = None, stream: bool = False) -> Any:
-        """GET manual: segue até MAX_REDIRECTS, só https, credencial apenas no 1º salto."""
+    def _get(self, url: str, auth: str | None = None, stream: bool = False, public_only: bool = False) -> Any:
+        """GET manual: segue até MAX_REDIRECTS, só https, credencial apenas no 1º salto.
+
+        public_only revalida cada salto (inclusive redirects) contra IP público, para URLs externas.
+        """
         headers = {"Authorization": auth} if auth else {}
         current = url
         for hop in range(MAX_REDIRECTS + 1):
@@ -173,6 +176,8 @@ class Downloader:
                 raise DownloadError("URL não https recusada")
             if parsed.username or parsed.password:
                 raise DownloadError("URL com credenciais recusada")
+            if public_only and not self._host_ok(parsed.hostname):
+                raise DownloadError("host externo recusado (não é um endereço público)")
             try:
                 resp = self._request(
                     "GET", current, headers=headers if hop == 0 else {}, timeout=self.timeout,
@@ -249,7 +254,7 @@ class Downloader:
                 raise DownloadError("imagem externa: use --external para baixar")
             if not self._host_ok(host):
                 raise DownloadError("host externo recusado (não é um endereço público)")
-            return {"url": url, "auth": None, "name": a["name"]}
+            return {"url": url, "auth": None, "name": a["name"], "public_only": True}
         raise DownloadError("anexo sem origem baixável")
 
     def sizes(self, atts: list[dict]) -> None:
@@ -309,7 +314,7 @@ class Downloader:
             r = self._resolve(a)
             if isinstance(r.get("size"), int) and r["size"] > self.max_bytes:
                 raise TooLarge(f"{att.fmt_size(r['size'])} acima do limite de {att.fmt_size(self.max_bytes)}")
-            resp = self._get(r["url"], auth=r["auth"], stream=True)
+            resp = self._get(r["url"], auth=r["auth"], stream=True, public_only=r.get("public_only", False))
             try:
                 self._check_status(resp, "download")
                 length = resp.headers.get("Content-Length", "")
