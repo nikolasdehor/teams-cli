@@ -374,3 +374,27 @@ def test_download_out_that_is_a_file_is_usage_error(env, capsys):
     bad.write_text("x")
     rc, _, err = run(capsys, "chat", "download", "c1", "--out", str(bad / "sub"))
     assert rc == cli.EXIT_USAGE and "--out" in err
+
+
+def test_upload_network_error_does_not_leak_upload_url(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "SIMPLE_UPLOAD_BYTES", 10)
+    f = tmp_path / "grande.bin"
+    f.write_bytes(b"0" * 20)
+
+    class Transport(FakeTransport):
+        def __call__(self, method, url, **kw):
+            if url.startswith("https://upload.example/"):
+                raise ConnectionError(f"falhou em {url}")
+            return super().__call__(method, url, **kw)
+
+    t = Transport({("POST", "/me/drive/root:/Teams CLI/grande.bin:/createUploadSession"):
+                   (200, {"uploadUrl": "https://upload.example/s?tempauth=SEGREDO"})})
+    with pytest.raises(cli.GraphError) as err:
+        cli._attach_file(Graph("t", request_fn=t), str(f))
+    assert "SEGREDO" not in str(err.value)
+
+
+def test_unwrap_collection_accepts_odata_context():
+    from teams_cli.output import unwrap_collection
+    assert unwrap_collection({"@odata.context": "x", "@odata.count": 1, "value": [{"id": 1}]}) == [{"id": 1}]
+    assert unwrap_collection({"value": [], "outra": 1}) == {"value": [], "outra": 1}

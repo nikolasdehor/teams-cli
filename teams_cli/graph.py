@@ -119,7 +119,8 @@ class Graph:
                     timeout=self.timeout,
                 )
             except Exception as exc:
-                raise GraphError(f"falha de rede no upload: {exc}")
+                # a uploadUrl é pré-autenticada: nunca vai para a mensagem de erro
+                raise GraphError(f"falha de rede no upload: {type(exc).__name__}")
             if resp.status_code in (200, 201):
                 item = resp.json()
             elif resp.status_code != 202:

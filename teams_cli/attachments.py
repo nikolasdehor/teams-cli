@@ -55,6 +55,16 @@ def is_share_host(host: str) -> bool:
     return bool(host and _SHARE_HOST.match(host))
 
 
+_GRAPH_DRIVE_ITEM = re.compile(
+    r"^https://graph\.microsoft\.com/v1\.0/(drives/[^/?#]+|me/drive|users/[^/?#]+/drive)/items/[^/?#]+$", re.I
+)
+
+
+def is_graph_drive_item(url: str | None) -> bool:
+    """contentUrl de anexo 'reference' que aponta direto para um driveItem do Graph."""
+    return bool(url and _GRAPH_DRIVE_ITEM.match(url))
+
+
 def _short_hash(text: str, n: int = 10) -> str:
     return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:n]
 
@@ -450,7 +460,7 @@ def extract_from_graph(msg: dict, chat_path: str | None = None) -> list[dict]:
             out.append(_att(
                 mid, id="f-" + _short_hash(url or str(a.get("id"))), kind=_kind_from_mime(mime), name=name,
                 mime=mime, source="graph-reference", url=url,
-                downloadable=bool(url) and is_share_host(_host(url)),
+                downloadable=bool(url) and (is_share_host(_host(url)) or is_graph_drive_item(url)),
             ))
         elif "card" in ctype:
             content = a.get("content")

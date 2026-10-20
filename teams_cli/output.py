@@ -106,6 +106,6 @@ def emit(data: Any, fmt: str, color: bool = False) -> None:
 
 def unwrap_collection(data: Any) -> Any:
     """Graph retorna {"value": [...]}: devolve a lista para saída limpa."""
-    if isinstance(data, dict) and isinstance(data.get("value"), list) and set(data) <= {"value", "@odata.count", "@odata.nextLink"}:
+    if isinstance(data, dict) and isinstance(data.get("value"), list) and all(k == "value" or k.startswith("@odata.") for k in data):
         return data["value"]
     return data

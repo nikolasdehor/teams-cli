@@ -231,6 +231,14 @@ class Downloader:
             if not self._skype:
                 raise DownloadError("sem token do AMS")
             return {"url": url, "auth": f"skype_token {self._skype()}", "name": a["name"]}
+        if src == "graph-reference" and att.is_graph_drive_item(url):
+            if not self._graph:
+                raise DownloadError("sem token do Graph")
+            item = self._json(f"{url}?$select=name,size,file,folder", self._graph())
+            if "folder" in item:
+                raise DownloadError("é uma pasta, não um arquivo")
+            return {"url": f"{url}/content", "auth": f"Bearer {self._graph()}", "name": item.get("name") or a["name"],
+                    "size": item.get("size"), "mime": (item.get("file") or {}).get("mimeType")}
         if src in ("sharepoint", "graph-reference"):
             if not att.is_share_host(host):
                 raise DownloadError("host de arquivos não reconhecido")
@@ -268,8 +276,9 @@ class Downloader:
                     r = self._resolve(a)
                     if isinstance(r.get("size"), int):
                         a["size"] = r["size"]
-                elif a["source"] == "ams" and self._skype:
-                    resp = self._get(a["url"], auth=f"skype_token {self._skype()}", stream=True)
+                elif (a["source"] == "ams" and self._skype) or (a["source"] == "graph-hosted" and self._graph):
+                    r = self._resolve(a)
+                    resp = self._get(r["url"], auth=r["auth"], stream=True)
                     try:
                         if resp.status_code == 200 and resp.headers.get("Content-Length", "").isdigit():
                             a["size"] = int(resp.headers["Content-Length"])
@@ -404,8 +413,8 @@ def extract_frames(path: Path, n: int, width: int = 960) -> tuple[list[str], str
     frames: list[str] = []
     for i in range(n):
         t = dur * (i + 0.5) / n
-        out = Path(f"{stem}_frame_{i + 1:02d}.jpg")
-        proc = _run(["ffmpeg", "-v", "error", "-y", *FFMPEG_SAFE, "-ss", f"{t:.3f}", "-i", str(path), "-frames:v", "1",
+        out = unique_dest(path.parent, f"{stem.name}_frame_{i + 1:02d}.jpg")
+        proc = _run(["ffmpeg", "-v", "error", "-n", *FFMPEG_SAFE, "-ss", f"{t:.3f}", "-i", str(path), "-frames:v", "1",
                      "-vf", f"scale={width}:-2", "-q:v", "3", str(out)], 120)
         if proc.returncode == 0 and out.exists():
             frames.append(str(out))
@@ -413,8 +422,8 @@ def extract_frames(path: Path, n: int, width: int = 960) -> tuple[list[str], str
     if len(frames) > 1:
         cols = min(len(frames), 4)
         rows = -(-len(frames) // cols)
-        out = Path(f"{stem}_sprite.jpg")
-        proc = _run(["ffmpeg", "-v", "error", "-y", *FFMPEG_SAFE, "-ss", "0", "-i", str(path), "-vf",
+        out = unique_dest(path.parent, f"{stem.name}_sprite.jpg")
+        proc = _run(["ffmpeg", "-v", "error", "-n", *FFMPEG_SAFE, "-ss", "0", "-i", str(path), "-vf",
                      f"fps={n}/{dur:.3f},scale=480:-2,tile={cols}x{rows}", "-frames:v", "1", "-q:v", "3",
                      str(out)], 300)
         if proc.returncode == 0 and out.exists():
@@ -426,8 +435,8 @@ def extract_frames(path: Path, n: int, width: int = 960) -> tuple[list[str], str
 
 def extract_audio(path: Path) -> str:
     """Trilha de áudio mono 16 kHz em .m4a (bom para transcrever)."""
-    out = Path(f"{path.with_suffix('')}_audio.m4a")
-    proc = _run(["ffmpeg", "-v", "error", "-y", *FFMPEG_SAFE, "-i", str(path), "-vn", "-ac", "1", "-ar", "16000",
+    out = unique_dest(path.parent, f"{path.stem}_audio.m4a")
+    proc = _run(["ffmpeg", "-v", "error", "-n", *FFMPEG_SAFE, "-i", str(path), "-vn", "-ac", "1", "-ar", "16000",
                  "-c:a", "aac", "-b:a", "48k", str(out)], 900)
     if proc.returncode != 0 or not out.exists():
         raise DownloadError("vídeo sem trilha de áudio ou ffmpeg falhou")

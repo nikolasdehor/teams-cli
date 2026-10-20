@@ -368,7 +368,8 @@ def build_context(
     now = now or datetime.now(timezone.utc)
     tz = get_tz(tz_name)
     me = whoami(xbin, timeout)
-    raw = xbe.run(xbin, ["message", "list", chat_id, "-n", str(MAX_WINDOW)], timeout)
+    # -O keep: HTML bruto, o único formato com <img>, URIObject e <attachment> para extrair anexos
+    raw = xbe.run(xbin, ["message", "list", chat_id, "-n", str(MAX_WINDOW), "-O", "keep"], timeout)
     msgs = normalize_messages(raw if isinstance(raw, list) else [])
     meta = _find_chat_meta(xbin, chat_id, timeout)
     title = ((meta.get("threadProperties") or {}).get("topic")) or None

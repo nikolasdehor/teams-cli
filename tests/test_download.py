@@ -329,3 +329,30 @@ def test_external_redirect_to_private_host_is_refused(tmp_path):
     res = mk(tmp_path, net, allow_external=True).download(ext, "1", 1)
     assert res["status"] == "error" and "público" in res["reason"]
     assert [c[0] for c in net.calls] == ["https://cdn.public.com/a.gif"]
+
+
+@needs_ffmpeg
+def test_derived_video_files_never_overwrite_existing(sample_mp4):
+    old = sample_mp4.parent / "clip_frame_01.jpg"
+    old.write_bytes(b"antigo")
+    res = {"status": "ok", "kind": "video", "path": str(sample_mp4), "reason": None, "frames": [], "sprite": None,
+           "audio": None}
+    dl.post_process_video(res, 2, False)
+    assert old.read_bytes() == b"antigo" and str(old) not in res["frames"] and len(res["frames"]) == 2
+
+
+def test_graph_drive_item_reference_is_resolved_with_graph_token(tmp_path):
+    item = "https://graph.microsoft.com/v1.0/drives/b!x/items/01ABC"
+    a = att._att("500", id="f-2", kind="file", name="r.pdf", source="graph-reference", url=item, downloadable=True)
+    net = Net({item + "/content": R(200, b"%PDF-1.4 ok"),
+               item + "?": R(200, js={"name": "r.pdf", "size": 11, "file": {"mimeType": "application/pdf"}})})
+    res = mk(tmp_path, net).download(a, "1", 1)
+    assert res["status"] == "ok" and Path(res["path"]).read_bytes() == b"%PDF-1.4 ok"
+    assert all(c[1].get("Authorization") == f"Bearer {GTOKEN}" for c in net.calls)
+
+
+def test_sizes_reads_length_of_graph_hosted_images(tmp_path):
+    url = "https://graph.microsoft.com/v1.0/chats/c/messages/9/hostedContents/aGk=/$value"
+    a = att._att("9", id="h-aGk=", kind="image", source="graph-hosted", url=url, downloadable=True)
+    mk(tmp_path, Net({url: R(200, headers={"Content-Length": "1234"})})).sizes([a])
+    assert a["size"] == 1234
