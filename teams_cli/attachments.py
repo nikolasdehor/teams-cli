@@ -125,12 +125,12 @@ def card_text(card: Any, _depth: int = 0) -> str:
         if typ in ("TextBlock",) and node.get("text"):
             lines.append(str(node["text"]).strip())
         elif typ == "RichTextBlock":
-            parts = [str(i.get("text", "")) if isinstance(i, dict) else str(i) for i in node.get("inlines", [])]
+            parts = [str(i.get("text", "")) if isinstance(i, dict) else str(i) for i in _as_list(node.get("inlines"))]
             joined = "".join(parts).strip()
             if joined:
                 lines.append(joined)
         elif typ == "FactSet":
-            for fact in node.get("facts", []):
+            for fact in _as_list(node.get("facts")):
                 if isinstance(fact, dict):
                     lines.append(f"{fact.get('title', '')}: {fact.get('value', '')}".strip(": "))
         elif typ == "Image" and node.get("altText"):
@@ -235,6 +235,11 @@ def _is_emoji(img: dict) -> bool:
         or "personal-expressions" in img.get("src", "")
         or "/emoticons/" in img.get("src", "")
     )
+
+
+def _as_list(value: Any) -> list:
+    """Cartão de terceiro pode mandar null ou outro tipo onde a spec pede lista."""
+    return value if isinstance(value, list) else []
 
 
 def _int(value: Any) -> int | None:

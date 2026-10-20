@@ -418,7 +418,7 @@ def recent_activity(
     """Olha as últimas mensagens: o próprio usuário escreveu há menos de N min?"""
     now = now or datetime.now(timezone.utc)
     me = whoami(xbin, timeout)
-    raw = xbe.run(xbin, ["message", "list", conv, "-n", str(MAX_WINDOW)], timeout)
+    raw = xbe.run(xbin, ["message", "list", conv, "-n", str(MAX_WINDOW), "-O", "keep"], timeout)
     msgs = normalize_messages(raw if isinstance(raw, list) else [])
     real = [m for m in msgs if is_real_message(m)]
     result: dict = {"known_me": bool(me.get("name")), "me_name": me.get("name"), "recent_own": False, "minutes_ago": None,

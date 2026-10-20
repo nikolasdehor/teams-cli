@@ -298,6 +298,8 @@ def test_frames_sprite_and_audio(sample_mp4):
     assert all(Path(f).stat().st_size > 0 and f.endswith(".jpg") for f in res["frames"])
     assert Path(res["sprite"]).stat().st_size > 0
     assert Path(res["audio"]).suffix == ".m4a" and Path(res["audio"]).stat().st_size > 0
+    for f in [*res["frames"], res["sprite"], res["audio"]]:
+        assert Path(f).stat().st_mode & 0o777 == 0o600
 
 
 @needs_ffmpeg

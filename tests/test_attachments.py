@@ -229,3 +229,9 @@ def test_each_unmatched_placeholder_is_kept():
 def test_infinite_image_dimensions_are_ignored():
     (img,) = att.extract_from_xteams(xmsg(f'<img src="{AMS}" width="1e309" height="-1e309">'))
     assert img["width"] is None and img["height"] is None
+
+
+def test_card_text_tolerates_null_collections():
+    card = {"type": "AdaptiveCard", "body": [{"type": "RichTextBlock", "inlines": None},
+                                             {"type": "FactSet", "facts": None}, {"type": "TextBlock", "text": "ok"}]}
+    assert att.card_text(card) == "ok"

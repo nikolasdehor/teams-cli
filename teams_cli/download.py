@@ -424,6 +424,7 @@ def extract_frames(path: Path, n: int, width: int = 960) -> tuple[list[str], str
         proc = _run(["ffmpeg", "-v", "error", "-n", *FFMPEG_SAFE, "-ss", f"{t:.3f}", "-i", str(path), "-frames:v", "1",
                      "-vf", f"scale={width}:-2", "-q:v", "3", str(out)], 120)
         if proc.returncode == 0 and out.exists():
+            os.chmod(out, 0o600)  # mesmo sigilo do vídeo baixado
             frames.append(str(out))
     sprite = None
     if len(frames) > 1:
@@ -434,6 +435,7 @@ def extract_frames(path: Path, n: int, width: int = 960) -> tuple[list[str], str
                      f"fps={n}/{dur:.3f},scale=480:-2,tile={cols}x{rows}", "-frames:v", "1", "-q:v", "3",
                      str(out)], 300)
         if proc.returncode == 0 and out.exists():
+            os.chmod(out, 0o600)
             sprite = str(out)
     if not frames:
         raise DownloadError("ffmpeg não extraiu quadros")
@@ -447,6 +449,7 @@ def extract_audio(path: Path) -> str:
                  "-c:a", "aac", "-b:a", "48k", str(out)], 900)
     if proc.returncode != 0 or not out.exists():
         raise DownloadError("vídeo sem trilha de áudio ou ffmpeg falhou")
+    os.chmod(out, 0o600)
     return str(out)
 
 

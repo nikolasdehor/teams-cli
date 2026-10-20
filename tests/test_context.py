@@ -363,3 +363,11 @@ def test_context_reads_raw_html_from_xteams(monkeypatch):
     ctx.build_context("x", GROUP, timeout=10, resolve=False)
     (lst,) = [a for a in calls if a[:2] == ["message", "list"]]
     assert lst[-2:] == ["-O", "keep"]
+
+
+def test_send_guard_reads_raw_html_from_xteams(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ctx.xbe, "run", lambda xbin, args, timeout: calls.append(args) or ([] if args[:2] == ["message", "list"] else {}))
+    ctx.recent_activity("x", GROUP, 5, 10)
+    (lst,) = [a for a in calls if a[:2] == ["message", "list"]]
+    assert lst[-2:] == ["-O", "keep"]
