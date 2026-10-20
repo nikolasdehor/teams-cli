@@ -246,3 +246,9 @@ def test_swift_with_null_attachments_does_not_abort():
     payload = base64.b64encode(json.dumps({"summary": "s", "attachments": None}).encode()).decode()
     html = f'<URIObject type="SWIFT.1"><Title>T</Title><Swift b64="{payload}"/></URIObject>'
     assert isinstance(att.extract_from_xteams(xmsg(html, "RichText/Media_Card")), list)
+
+
+def test_properties_file_with_null_file_info_uses_share_url():
+    props = {"files": json.dumps([{"fileName": "orc.xlsx", "fileInfo": None, "shareUrl": SP_DOC}])}
+    (f,) = att.extract_from_xteams(xmsg("", properties=props))
+    assert f["url"] == SP_DOC

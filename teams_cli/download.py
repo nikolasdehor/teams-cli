@@ -82,8 +82,16 @@ _MAGIC: list[tuple[bytes, int, str, str]] = [
 ]
 
 
+_MEDIA_EXTS = {
+    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".bmp", ".tif", ".tiff",
+    ".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi", ".wmv", ".m4a", ".mp3", ".ogg", ".wav", ".aac", ".opus",
+}
+
+
 def sniff(head: bytes) -> tuple[str, str] | None:
     """(extensão, mime) pelos primeiros bytes, ou None se não reconhece."""
+    if head[:4] == b"\x1a\x45\xdf\xa3" and b"matroska" in head[:64]:  # EBML: DocType separa mkv de webm
+        return ".mkv", "video/x-matroska"
     for magic, off, ext, mime in _MAGIC:
         if head[off : off + len(magic)] == magic:
             return ext, mime
@@ -103,6 +111,9 @@ def final_name(base: str, kind: str, head: bytes) -> tuple[str, str | None]:
     """Ajusta a extensão de imagens/vídeos/áudios ao conteúdo real. Retorna (nome, mime_detectado)."""
     found = sniff(head)
     if not found:
+        stem, dot, cur = base.rpartition(".")
+        if kind in ("image", "video", "audio", "recording") and dot and stem and "." + cur.lower() not in _MEDIA_EXTS:
+            return stem + ".bin", None  # nome vem de terceiro: mídia não reconhecida nunca sai como .html/.svg
         return base, None
     ext, mime = found
     stem, dot, cur = base.rpartition(".")
@@ -468,12 +479,17 @@ def post_process_video(res: dict, frames: int, audio: bool) -> None:
         return
     path = Path(res["path"])
     notes = []
-    try:
-        if frames:
-            res["frames"], res["sprite"] = extract_frames(path, frames)
-        if audio:
-            res["audio"] = extract_audio(path)
-    except (DownloadError, subprocess.TimeoutExpired, OSError) as exc:
-        notes.append(str(exc) if not isinstance(exc, subprocess.TimeoutExpired) else "ffmpeg demorou demais")
+    jobs = [("frames", lambda: extract_frames(path, frames))] if frames else []
+    jobs += [("audio", lambda: extract_audio(path))] if audio else []
+    for what, job in jobs:  # um falhar não impede o outro
+        try:
+            out = job()
+        except (DownloadError, subprocess.TimeoutExpired, OSError) as exc:
+            notes.append(str(exc) if not isinstance(exc, subprocess.TimeoutExpired) else "ffmpeg demorou demais")
+            continue
+        if what == "frames":
+            res["frames"], res["sprite"] = out
+        else:
+            res["audio"] = out
     if notes:
         res["reason"] = "; ".join(notes)

@@ -378,7 +378,8 @@ def _from_properties(message_id: Any, props: Any) -> list[dict]:
     for f in load(props.get("files")) or []:
         if not isinstance(f, dict):
             continue
-        url = f.get("objectUrl") or f.get("fileInfo", {}).get("fileUrl") or f.get("shareUrl")
+        info = f.get("fileInfo") if isinstance(f.get("fileInfo"), dict) else {}
+        url = f.get("objectUrl") or info.get("fileUrl") or f.get("shareUrl")
         name = f.get("fileName") or f.get("title")
         mime = _mime_for(name)
         out.append(_att(

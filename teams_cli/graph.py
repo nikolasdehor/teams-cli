@@ -98,7 +98,7 @@ class Graph:
     def put_bytes(self, path: str, data: bytes, params: dict | None = None) -> Any:
         return self.call("PUT", path, params=params, raw=data, content_type="application/octet-stream")
 
-    def upload_large(self, path: str, data: bytes) -> Any:
+    def upload_large(self, path: str, fh: Any, total: int) -> Any:
         """Upload resumível (createUploadSession) em pedaços de 13 x 320 KiB, para arquivos grandes."""
         sess = self.post(
             f"{path}:/createUploadSession",
@@ -107,7 +107,7 @@ class Graph:
         url = (sess or {}).get("uploadUrl")
         if not url:
             raise GraphError("o Graph não devolveu uploadUrl para o arquivo grande")
-        total, step, item = len(data), UPLOAD_CHUNK, None
+        step, item = UPLOAD_CHUNK, None  # lê um pedaço por vez do disco, nunca o arquivo inteiro
         for start in range(0, total, step):
             end = min(start + step, total) - 1
             try:
@@ -115,7 +115,7 @@ class Graph:
                     "PUT",
                     url,
                     headers={"Content-Range": f"bytes {start}-{end}/{total}"},  # sem Authorization de propósito
-                    data=data[start : end + 1],
+                    data=fh.read(end + 1 - start),
                     timeout=self.timeout,
                 )
             except Exception as exc:

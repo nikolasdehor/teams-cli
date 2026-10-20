@@ -315,12 +315,13 @@ def test_large_file_goes_through_upload_session(tmp_path, monkeypatch):
     monkeypatch.setattr("teams_cli.graph.UPLOAD_CHUNK", 8)
     f = tmp_path / "grande.bin"
     f.write_bytes(b"0123456789ABCDEFGHIJ")  # 20 bytes -> 3 pedaços de 8
-    puts = []
+    puts, sent = [], []
 
     class Transport(FakeTransport):
         def __call__(self, method, url, **kw):
             if url.startswith("https://upload.example/"):
                 puts.append((kw["headers"], len(kw["data"])))
+                sent.append(kw["data"])
                 assert "Authorization" not in kw["headers"]
                 from test_teams import FakeResp
                 done = kw["headers"]["Content-Range"].endswith("19/20")
@@ -333,6 +334,7 @@ def test_large_file_goes_through_upload_session(tmp_path, monkeypatch):
     })
     ref = cli._attach_file(Graph("t", request_fn=t), str(f))
     assert [h["Content-Range"] for h, _ in puts] == ["bytes 0-7/20", "bytes 8-15/20", "bytes 16-19/20"]
+    assert b"".join(sent) == b"0123456789ABCDEFGHIJ"
     assert ref["id"] == "aaaaaaaa-0000-0000-0000-000000000000"
 
 

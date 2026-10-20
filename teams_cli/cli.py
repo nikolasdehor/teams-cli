@@ -306,13 +306,13 @@ def _attach_file(graph: Graph, path_str: str) -> dict:
     if size > MAX_UPLOAD_BYTES:
         raise UsageError(f"anexo acima de {MAX_UPLOAD_BYTES // 1024 // 1024}MB")
     target = f"/me/drive/root:/Teams CLI/{_q(path.name)}"
-    data = path.read_bytes()
     if size <= SIMPLE_UPLOAD_BYTES:
         item = graph.put_bytes(
-            f"{target}:/content", data, params={"@microsoft.graph.conflictBehavior": "rename"}
+            f"{target}:/content", path.read_bytes(), params={"@microsoft.graph.conflictBehavior": "rename"}
         )
     else:
-        item = graph.upload_large(target, data)
+        with path.open("rb") as fh:
+            item = graph.upload_large(target, fh, size)
     url = item.get("webUrl")
     try:
         link = graph.post(f"/me/drive/items/{item['id']}/createLink", {"type": "view", "scope": "organization"})

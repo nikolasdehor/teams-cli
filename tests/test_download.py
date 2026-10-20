@@ -377,3 +377,28 @@ def test_open_race_does_not_delete_file_from_other_download(tmp_path, monkeypatc
 def test_safe_filename_is_bounded_in_bytes():
     name = dl.safe_filename("文" * 96 + ".docx")
     assert name.endswith(".docx") and len(name.encode("utf-8")) <= dl.MAX_NAME_BYTES
+
+
+def test_matroska_is_not_renamed_to_webm():
+    head = b"\x1a\x45\xdf\xa3\x9f\x42\x86\x81\x01\x42\x82\x88matroska" + b"0" * 20
+    assert dl.final_name("aula.mkv", "video", head) == ("aula.mkv", "video/x-matroska")
+    assert dl.final_name("x.mkv", "video", b"\x1a\x45\xdf\xa3\x42\x82\x84webm" + b"0" * 20)[0] == "x.webm"
+
+
+def test_unrecognized_media_never_keeps_active_suffix():
+    assert dl.final_name("pagina.html", "image", b"<html><script>")[0] == "pagina.bin"
+    assert dl.final_name("foto.jpeg", "image", b"???")[0] == "foto.jpeg"
+    assert dl.final_name("Relatorio.html", "file", b"<html>")[0] == "Relatorio.html"
+
+
+def test_audio_still_extracted_when_frames_fail(tmp_path, monkeypatch):
+    clip = tmp_path / "v.mp4"
+    clip.write_bytes(b"x")
+    monkeypatch.setattr(dl, "ffmpeg_available", lambda: True)
+    def bad_frames(path, n):
+        raise dl.DownloadError("quadros falharam")
+    monkeypatch.setattr(dl, "extract_frames", bad_frames)
+    monkeypatch.setattr(dl, "extract_audio", lambda path: str(tmp_path / "v_audio.m4a"))
+    res = {"status": "ok", "kind": "video", "path": str(clip), "reason": None, "frames": [], "sprite": None, "audio": None}
+    dl.post_process_video(res, 2, True)
+    assert res["audio"].endswith("v_audio.m4a") and "quadros falharam" in res["reason"]
