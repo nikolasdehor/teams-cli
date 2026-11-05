@@ -19,6 +19,7 @@ from typing import Any, Callable
 
 from . import attachments as att
 from . import xteams as xbe
+from .output import safe_display
 
 MAX_WINDOW = 200  # teto do xteams/Teams por chamada (PageSize <= 200)
 DEFAULT_GUARD_MINUTES = 5
@@ -450,8 +451,8 @@ def describe_last(msgs: list[dict], me_name: str | None, tz_name: str = DEFAULT_
     lines = []
     for m in msgs:
         item = shape_message(m, me_name, tz)
-        who = "eu" if item["is_me"] else (item["author"] or "?")
-        text = item["text"].replace("\n", " ")
+        who = "eu" if item["is_me"] else safe_display(item["author"] or "?", True)
+        text = safe_display(item["text"], True)
         text = text if len(text) <= 140 else text[:139] + "…"
         lines.append(f"  [{item['time_local'] or '?'}] {who}: {text}")
     return lines

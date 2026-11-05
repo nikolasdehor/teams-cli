@@ -240,6 +240,20 @@ Comportamento (vale para os dois motores):
   com o **texto novo**. Sem confirmação: exit 1, JSON com `edited: null, confirmed: false` e a
   mensagem "edição enviada mas não confirmada; confira com `teams chat messages` antes de repetir".
   Em 403 a mensagem cita a política do tenant ou mensagem de terceiro e traz o detalhe original.
+- **Limitação do `channel edit --graph`**: o login padrão do Graph não inclui `ChannelMessage.ReadWrite`
+  (as permissões padrão não foram ampliadas de propósito: em conta corporativa isso pode exigir
+  consentimento do admin e quebrar o `teams auth login`). Por isso o PATCH de edição em canal pelo Graph
+  responde 403; a mensagem de erro diz que pode faltar a permissão ou haver bloqueio do tenant (sem
+  afirmar causa única) e sugere o motor xteams (rode sem `--graph`). `channel reply --graph` e `chat edit --graph` não são afetados.
+- **Saída segura no terminal**: textos vindos do servidor (mensagens, autores, menções, nomes de anexo,
+  chats, canais e pessoas) passam por sanitização na saída humana, nos avisos/planos em stderr e no
+  prompt de confirmação: sequências ANSI/OSC/CSI, controles C0/C1 (exceto `\n` e `\t`), DEL e controles
+  bidi, separadores U+2028/2029 e invisíveis (U+200B, U+200C, U+2060-2064, U+FEFF, U+00AD, tag chars)
+  são removidos (ZWJ e seletores de variação ficam, para o emoji composto), e nomes de uma linha só nunca
+  criam linha nova. Em `--json`, o texto não perde nada: C1, bidi e invisíveis saem como `\uXXXX` e
+  `json.loads` devolve o original. Em `--plain`, cada linha passa pelo mesmo sanitizador da saída humana
+  (sem round trip). O que é gravado em disco ou enviado ao Teams não muda. Nomes de arquivo baixados
+  também perdem C1, bidi e invisíveis.
 - Reply de chat: sem autor identificável o xteams cita "Desconhecido" (com aviso); o Graph aborta,
   pois exige o id do remetente.
 - Texto puro passa pelo mesmo `_body` do `send` (escape + links); autor e trecho da citação são

@@ -28,6 +28,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 
 from . import attachments as att
+from .output import _CTRL_RE
 
 DEFAULT_MAX_MB = 50
 MAX_REDIRECTS = 5
@@ -51,7 +52,8 @@ def safe_filename(name: str | None, fallback: str = "arquivo", max_len: int = MA
     """Nome de arquivo seguro: sem separadores, sem controle, sem ponto inicial, tamanho limitado."""
     text = unicodedata.normalize("NFKC", name or "")
     text = text.replace("\\", "/").split("/")[-1]
-    text = re.sub(r"[\x00-\x1f\x7f<>:\"|?*]", "_", text).strip(" .")
+    text = re.sub(r"[\x00-\x1f<>:\"|?*]", "_", text)
+    text = _CTRL_RE.sub("_", text).strip(" .")  # DEL, C1, bidi e invisíveis (fatura\u202egpj.exe)
     text = re.sub(r"\s+", " ", text)
     if not text or set(text) <= {"_", "."}:
         text = fallback

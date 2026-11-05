@@ -21,7 +21,7 @@ from . import message_ops as mo
 from . import xteams as xbe
 from .autolink import text_to_html
 from .graph import BASE as GRAPH_BASE, AuthExpired, Forbidden, Graph, GraphError, NotFound
-from .output import emit, eprint, unwrap_collection
+from .output import emit, eprint, print_lines, safe_display, unwrap_collection
 
 EXIT_OK = 0
 EXIT_FAIL = 1
@@ -377,7 +377,7 @@ def _confirmed(plan: str, parsed: argparse.Namespace) -> bool:
         raise UsageError(f"escrita exige confirmação: {plan}. Use --yes ou rode sem --no-input.")
     if not sys.stdin.isatty():
         raise UsageError(f"confirmação necessária ({plan}): use --yes ou rode em terminal interativo.")
-    answer = input(f"{plan}. Confirmar? [s/N] ").strip().lower()
+    answer = input(safe_display(f"{plan}. Confirmar? [s/N] ")).strip().lower()
     return answer in ("s", "sim", "y", "yes")
 
 
@@ -660,9 +660,9 @@ def _send_guard(parsed: argparse.Namespace, xbin: str | None, timeout: float) ->
         raise
     except xbe.XteamsError as exc:
         if parsed.dry_run:
-            eprint(f"[dry-run] não consegui ler as últimas mensagens: {exc}")
+            eprint(f"[dry-run] não consegui ler as últimas mensagens: {exc}", single_line=True)
         else:
-            eprint(f"aviso: não consegui ler as últimas mensagens ({exc}); guarda de mensagem recente não aplicada")
+            eprint(f"aviso: não consegui ler as últimas mensagens ({exc}); guarda de mensagem recente não aplicada", single_line=True)
         return
     if parsed.dry_run:
         if act["last"] and not parsed.quiet:
@@ -876,7 +876,7 @@ def _run_graph_auth(parsed, profile, settings):
     me = graph.get("/me", params={"$select": "displayName,mail,userPrincipalName"})
     me["profile"] = profile.name
     if not parsed.quiet:
-        eprint(f"perfil {profile.name}: logado como {me.get('displayName') or me.get('mail')}")
+        eprint(f"perfil {profile.name}: logado como {me.get('displayName') or me.get('mail')}", single_line=True)
     return me, EXIT_OK
 
 
@@ -888,7 +888,7 @@ def _run_auth(parsed: argparse.Namespace, profile: config.Profile, settings: con
         try:
             data = xbe.run(xbin, ["auth", "status"], settings.timeout)
         except xbe.XteamsAuthError as exc:
-            eprint(f"não autenticado: {exc}")
+            eprint(f"não autenticado: {exc}", single_line=True)
             return None, EXIT_AUTH
         combined = {"xteams": data, "_graph": _graph_status(settings)}
         return combined, EXIT_OK
@@ -923,7 +923,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 data = _run_message_op(parsed, profile, settings)
             except mo.MessageOpError as exc:
-                eprint(f"erro: {exc}")
+                eprint(f"erro: {exc}", single_line=True)
                 if exc.result is not None and not (parsed.quiet and fmt == "human"):
                     emit(exc.result, fmt, color)
                 return EXIT_FAIL
@@ -947,7 +947,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 data, code = _run_auth(parsed, profile, settings)
             except auth.AuthError as exc:
-                eprint(f"não autenticado: {exc}")
+                eprint(f"não autenticado: {exc}", single_line=True)
                 return EXIT_AUTH
             if data is not None and not (parsed.quiet and fmt == "human"):
                 emit(data, fmt, color)
@@ -957,8 +957,7 @@ def main(argv: list[str] | None = None) -> int:
             results, code = run_download(parsed, profile, settings)
             if not (parsed.quiet and fmt == "human"):
                 if fmt == "human":
-                    for line in render_download_human(results):
-                        print(line)
+                    print_lines(render_download_human(results))
                 else:
                     emit(results, fmt, color)
             if fmt == "human" and not parsed.quiet:
@@ -971,7 +970,7 @@ def main(argv: list[str] | None = None) -> int:
                     profile, xbe.find_bin(), settings.timeout, allow_xteams=profile.name == settings.default_profile and not parsed.graph
                 )
             except (auth.AuthError, xbe.XteamsError) as exc:
-                eprint(f"não autenticado: {exc}")
+                eprint(f"não autenticado: {exc}", single_line=True)
                 return EXIT_AUTH
             store = Graph(token, settings.timeout)
             if parsed.verbose and not parsed.quiet:
@@ -979,7 +978,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 data, plan = run_command(parsed, store)
             except (AuthExpired, auth.AuthError) as exc:
-                eprint(f"não autenticado: {exc}")
+                eprint(f"não autenticado: {exc}", single_line=True)
                 return EXIT_AUTH
             if plan is not None:
                 if not _confirmed(plan, parsed):
@@ -987,10 +986,10 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     data = run_write(parsed, store)
                 except Forbidden as exc:
-                    eprint(f"sem permissão: {exc}")
+                    eprint(f"sem permissão: {exc}", single_line=True)
                     return EXIT_FAIL
                 except AuthExpired as exc:
-                    eprint(f"não autenticado: {exc}")
+                    eprint(f"não autenticado: {exc}", single_line=True)
                     return EXIT_AUTH
         else:
             xbin = xbe.find_bin()
@@ -999,7 +998,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 data, plan = run_x(parsed, xbin, settings.timeout, fmt)
             except xbe.XteamsAuthError as exc:
-                eprint(f"não autenticado: {exc}")
+                eprint(f"não autenticado: {exc}", single_line=True)
                 return EXIT_AUTH
             if plan is not None:
                 _send_guard(parsed, xbin, settings.timeout)
@@ -1008,27 +1007,24 @@ def main(argv: list[str] | None = None) -> int:
                 data = run_x_write(parsed, xbin, settings.timeout)
         if not (parsed.quiet and fmt == "human"):
             if fmt == "human" and parsed.cmd == "chat" and getattr(parsed, "sub", None) == "context":
-                for line in ctxmod.render_human(data):
-                    print(line)
+                print_lines(ctxmod.render_human(data))
             else:
                 emit(data, fmt, color)
                 if fmt == "human" and parsed.cmd in ("chat", "channel") and getattr(parsed, "sub", None) == "messages":
-                    for line in att.render_human(data if isinstance(data, list) else []):
-                        print(line)
-                    for line in mo.render_ids(data):
-                        print(line)
+                    print_lines(att.render_human(data if isinstance(data, list) else []))
+                    print_lines(mo.render_ids(data))
         return EXIT_OK
     except UsageError as exc:
-        eprint(f"erro de uso: {exc}")
+        eprint(f"erro de uso: {exc}", single_line=True)
         return EXIT_USAGE
     except NotFound as exc:
-        eprint(f"não encontrado: {exc}")
+        eprint(f"não encontrado: {exc}", single_line=True)
         return EXIT_FAIL
     except (xbe.XteamsAuthError, auth.AuthError, AuthExpired) as exc:
-        eprint(f"não autenticado: {exc}")
+        eprint(f"não autenticado: {exc}", single_line=True)
         return EXIT_AUTH
     except (GraphError, xbe.XteamsError) as exc:
-        eprint(f"erro: {exc}")
+        eprint(f"erro: {exc}", single_line=True)
         return EXIT_FAIL
     except KeyboardInterrupt:
         eprint("interrompido")

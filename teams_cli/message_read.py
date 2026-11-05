@@ -17,6 +17,10 @@ from .graph import Graph, NotFound
 _QUOTE_RE = re.compile(
     r'^\s*(<blockquote[^>]*schema\.skype\.com/Reply.*?</blockquote>)', re.S | re.I
 )
+_GRAPH_QUOTE_RE = re.compile(
+    r'^\s*(?:<attachment\b[^>]*>\s*</attachment>\s*)*(<blockquote[^>]*schema\.skype\.com/Reply.*?</blockquote>)',
+    re.S | re.I,
+)
 _LINK_ROOT = re.compile(r";messageid=(\d+)", re.I)
 _MRI = re.compile(r"(8:[^\s\"'/]+)")
 _NOT_FOUND = re.compile(r"not found|não encontr|\b404\b", re.I)
@@ -113,6 +117,8 @@ def _from_graph(raw: dict) -> Target:
             names.append(name)
     refs = [a for a in raw.get("attachments") or [] if isinstance(a, dict) and a.get("contentType") == "messageReference"]
     prefix = "".join(f'<attachment id="{html.escape(str(a.get("id")), quote=True)}"></attachment>' for a in refs)
+    quoted = _GRAPH_QUOTE_RE.match(content) if is_html else None
+    prefix += quoted.group(1) if quoted else ""  # citação inicial preservada, sem repetir os <attachment>
     return Target(
         id=str(raw["id"]), author=user.get("displayName"), author_id=user.get("id"), mri=None, html=content,
         text=parsed["text"], mentions=names, attachments=att.extract(raw, "graph"),
