@@ -14,6 +14,10 @@ class GraphError(Exception):
     """Falha da API: mensagem legível + exit 1."""
 
 
+class GraphNetworkError(GraphError):
+    """Timeout ou falha de rede: numa escrita, o resultado é desconhecido."""
+
+
 class AuthExpired(GraphError):
     """401: token expirado. Vira exit 3 no CLI."""
 
@@ -62,7 +66,7 @@ class Graph:
                 timeout=self.timeout,
             )
         except Exception as exc:
-            raise GraphError(f"falha de rede no Graph: {exc}")
+            raise GraphNetworkError(f"falha de rede no Graph: {exc}")
         if resp.status_code in (200, 201):
             if not resp.content:
                 return None
@@ -94,6 +98,9 @@ class Graph:
 
     def post(self, path: str, payload: dict | None = None) -> Any:
         return self.call("POST", path, payload=payload)
+
+    def patch(self, path: str, payload: dict | None = None) -> Any:
+        return self.call("PATCH", path, payload=payload)
 
     def put_bytes(self, path: str, data: bytes, params: dict | None = None) -> Any:
         return self.call("PUT", path, params=params, raw=data, content_type="application/octet-stream")

@@ -12,6 +12,9 @@ def out(obj):
 
 def main(args):
     args = [a for a in args if a != "-j"]
+    if os.environ.get("FAKE_X_LOG"):  # uma linha JSON por chamada, para os testes conferirem as escritas
+        with open(os.environ["FAKE_X_LOG"], "a") as log:
+            log.write(json.dumps(args) + "\n")
     if os.environ.get("FAKE_X_NOAUTH") and args[:2] != ["auth", "login"]:
         sys.stderr.write("Error: not signed in, run `xteams auth login`\n")
         return 1
@@ -22,7 +25,10 @@ def main(args):
         )
         return 1
     if args[:2] == ["auth", "status"]:
-        out({"account": "user@work.com", "user": "user@work.com", "name": "Eu Mesmo", "mode": "device-code"})
+        status = {"account": "user@work.com", "user": "user@work.com", "name": "Eu Mesmo", "mode": "device-code"}
+        if os.environ.get("FAKE_X_ME_ID"):
+            status["id"] = os.environ["FAKE_X_ME_ID"]
+        out(status)
         return 0
     if args[:2] in (["auth", "login"], ["auth", "logout"]):
         return 0
@@ -56,10 +62,31 @@ def main(args):
         fmt = args[args.index("-O") + 1] if "-O" in args else "markdown"
         out([{"id": f"m{i}", "conversation": args[2], "format": fmt} for i in range(n)])
         return 0
+    if args[:2] == ["message", "edit"]:
+        if os.environ.get("FAKE_X_EDIT_FAIL"):
+            sys.stderr.write(f"Error: {os.environ['FAKE_X_EDIT_FAIL']}\n")
+            return 1
+        if os.environ.get("FAKE_X_MSGS") and not os.environ.get("FAKE_X_EDIT_NOOP"):
+            path = os.environ["FAKE_X_MSGS"]
+            msgs = json.load(open(path))
+            for m in msgs:
+                if m["id"] == args[3]:
+                    m["content"] = args[args.index("--content") + 1]
+            json.dump(msgs, open(path, "w"))
+        out({"id": args[3], "conversation": args[2]})
+        return 0
+    if args[:2] == ["message", "new"] and os.environ.get("FAKE_X_NEW_FAIL"):
+        sys.stderr.write("Error: servidor recusou\n")
+        return 1
     if args[:2] == ["message", "new"]:
         text = args[args.index("--content") + 1]
         fmt = "html" if "-I" in args and args[args.index("-I") + 1] == "html" else "markdown"
-        out({"id": "m9", "conversation": args[2], "content": text, "format": fmt})
+        resp = {"id": "m9", "conversation": args[2], "content": text, "format": fmt}
+        if os.environ.get("FAKE_X_NEW_NOID"):
+            resp.pop("id")
+        if os.environ.get("FAKE_X_NEW_ROOT"):  # a resposta expõe a raiz da thread
+            resp["rootMessageId"] = os.environ["FAKE_X_NEW_ROOT"]
+        out(resp)
         return 0
     if args[:2] == ["user", "search"] and os.environ.get("FAKE_X_USERS"):
         out(json.load(open(os.environ["FAKE_X_USERS"])).get(args[2], []))

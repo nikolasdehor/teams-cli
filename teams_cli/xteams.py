@@ -19,6 +19,10 @@ class XteamsAuthError(XteamsError):
     """Sem login no xteams. Vira exit 3 no CLI."""
 
 
+class XteamsTimeout(XteamsError):
+    """O xteams não respondeu a tempo: numa escrita, o resultado é desconhecido."""
+
+
 class XteamsNotFound(XteamsError):
     """Binário xteams não encontrado."""
 
@@ -46,7 +50,7 @@ def run(xteams: str | None, args: list[str], timeout: float) -> Any:
     except FileNotFoundError:
         raise XteamsNotFound(f"xteams não encontrado: {xteams}")
     except subprocess.TimeoutExpired:
-        raise XteamsError(f"xteams demorou além de {timeout:g}s")
+        raise XteamsTimeout(f"xteams demorou além de {timeout:g}s")
     if proc.returncode != 0:
         err = ((proc.stderr or "") + (proc.stdout or "")).strip()
         if _needs_login(err):

@@ -42,6 +42,10 @@ teams chat context CHAT_ID [--limit N] [--sizes] # xteams: leia ANTES de escreve
 teams chat messages CHAT_ID [--sizes]            # xteams (até 200; Graph até 50), com anexos
 teams chat download CHAT_ID --out PASTA          # baixa imagens, arquivos, vídeos e cartões
 teams chat send CHAT_ID --message T              # xteams (--to/--file vão pro Graph)
+teams chat reply CHAT_ID MSG_ID --message T      # xteams (citação); Graph com --graph/perfil
+teams chat edit CHAT_ID MSG_ID --message T       # xteams; Graph com --graph/perfil
+teams channel reply TEAM_ID CHANNEL_ID MSG_ID [--root RAIZ] --message T  # xteams (thread); Graph com --graph
+teams channel edit TEAM_ID CHANNEL_ID MSG_ID [--root RAIZ] --message T   # xteams; Graph com --graph
 teams chat create --members A,B                  # Graph
 teams people search QUERY                        # xteams
 teams meetings [list] [--days N]                 # xteams
@@ -196,6 +200,50 @@ igualmente espaçados mais um sprite (`*_sprite.jpg`, grade com todos); com
   suba `--max-mb`.
 - Transcrições de reunião são indexadas pelo Teams e não têm download direto aqui.
 - Para canais use o id do canal como `CHAT_ID` (xteams); o motor Graph só lê chats.
+
+## Responder e editar mensagens
+
+`reply` e `edit` aceitam `--message` (use `-` para o stdin), `--message-file`, `--html` e as flags
+globais. `--file` não existe nestes comandos. O `MSG_ID` é o `id` mostrado por `chat messages`
+(bloco "ids (use em reply/edit)"), `channel messages` e `chat context` (`id ...` em cada mensagem).
+
+| Comando | xteams (padrão) | Graph (`--graph` ou perfil não padrão) |
+|---|---|---|
+| `chat reply` | `message new` com citação `schema.skype.com/Reply` (chat não tem thread) | `POST /me/chats/{c}/messages` com anexo `messageReference` |
+| `channel reply` | `message new --reply-to RAIZ` (thread) | `POST /teams/{t}/channels/{c}/messages/{raiz}/replies` |
+| `chat edit` | `message edit --content ... -I html` | `PATCH /chats/{c}/messages/{m}` |
+| `channel edit` | `message edit` | `PATCH /teams/{t}/channels/{c}/messages/{m}` (ou `.../{raiz}/replies/{m}` se for resposta) |
+
+Comportamento (vale para os dois motores):
+
+- A mensagem-alvo é **sempre lida antes**. Não encontrada (ou resposta com outro id): erro e nada é
+  escrito. Em canal, o Graph só lê respostas de thread com `--root` (veja abaixo).
+- Nunca há envio de mensagem nova como alternativa nem retry de escrita. Se o reply ou o edit falhar,
+  o comando termina com exit diferente de 0. Timeout ou falha de rede na escrita, ou reply sem `id`
+  na resposta, dá "resultado desconhecido; confira com `teams ... messages` antes de repetir".
+- Confirmação como no `send` (`--yes`, `--no-input`, `--dry-run`). O plano do reply mostra autor,
+  trecho e (em canal) a raiz da thread; o do edit mostra ANTES e DEPOIS. Dry-run e recusa do usuário
+  saem com exit 0. O resultado é sempre um objeto: `{"sent"|"edited": ..., "dry_run": bool,
+  "declined": bool, ...}`. `reply` usa a guarda de mensagem recente (`--recent-minutes`, `--force`)
+  no xteams; `edit` não.
+- **Thread de canal**: `--root ROOT_ID` (só em `channel reply`/`channel edit`) manda mais que a raiz
+  detectada. No xteams a raiz detectada vem só de `rootMessageId`, `replyChainId` ou do
+  `;messageid=` do `conversationLink`; se o alvo parece resposta (`replyToId`/`parentMessageId`) e a
+  raiz não é resolvida, o comando aborta pedindo `--root`. Depois do reply no xteams, a raiz devolvida
+  é conferida (diferente da esperada = erro; ausente = aviso).
+- `edit` só vale para mensagem sua. A autoria compara id/MRI quando existe; o nome (sem acento nem
+  caixa) é o último recurso. Autor identificado como outra pessoa: bloqueia sempre, mesmo com
+  `--force`. Autor não confirmado: aborta, a menos que use `--force`.
+- `edit` preserva a citação inicial (blockquote Reply) do original. Mensagem com anexo, menção ou
+  tipo não textual (cartão etc.) é recusada, pois a edição perderia conteúdo, a menos que use `--force`.
+- Depois do `edit` a mensagem é relida (até 3 vezes, com espera de 1 s e 2 s) e o texto é comparado
+  com o **texto novo**. Sem confirmação: exit 1, JSON com `edited: null, confirmed: false` e a
+  mensagem "edição enviada mas não confirmada; confira com `teams chat messages` antes de repetir".
+  Em 403 a mensagem cita a política do tenant ou mensagem de terceiro e traz o detalhe original.
+- Reply de chat: sem autor identificável o xteams cita "Desconhecido" (com aviso); o Graph aborta,
+  pois exige o id do remetente.
+- Texto puro passa pelo mesmo `_body` do `send` (escape + links); autor e trecho da citação são
+  sempre escapados.
 
 ## Enviar imagens e arquivos
 
