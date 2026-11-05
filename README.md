@@ -250,9 +250,8 @@ Comportamento (vale para os dois motores):
   prompt de confirmação: sequências ANSI/OSC/CSI, controles C0/C1 (exceto `\n` e `\t`), DEL e controles
   bidi, separadores U+2028/2029 e invisíveis (U+200B, U+200C, U+2060-2064, U+FEFF, U+00AD, tag chars)
   são removidos (ZWJ e seletores de variação ficam, para o emoji composto), e nomes de uma linha só nunca
-  criam linha nova. Em `--json`, o texto não perde nada: C1, bidi e invisíveis saem como `\uXXXX` e
-  `json.loads` devolve o original. Em `--plain`, cada linha passa pelo mesmo sanitizador da saída humana
-  (sem round trip). O que é gravado em disco ou enviado ao Teams não muda. Nomes de arquivo baixados
+  criam linha nova. Em `--json` e `--plain`, o texto não perde nada: C1, bidi e invisíveis saem como
+  `\uXXXX` e `json.loads` devolve o original. O que é gravado em disco ou enviado ao Teams não muda. Nomes de arquivo baixados
   também perdem C1, bidi e invisíveis.
 - Reply de chat: sem autor identificável o xteams cita "Desconhecido" (com aviso); o Graph aborta,
   pois exige o id do remetente.

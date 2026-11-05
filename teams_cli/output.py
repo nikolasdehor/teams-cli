@@ -154,7 +154,7 @@ def emit(data: Any, fmt: str, color: bool = False) -> None:
     elif fmt == "plain":
         items = data if isinstance(data, list) else [data]
         for item in items:
-            print(safe_display(json.dumps(item, ensure_ascii=False), True))
+            print(_json_dumps(item))
     else:
         for line in _human(data, 0, color):
             print(_own_line(line))

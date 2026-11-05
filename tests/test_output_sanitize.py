@@ -141,10 +141,21 @@ def test_json_escapes_hidden_chars_and_roundtrips(capsys):
     assert json.loads(out) == {"t": raw, "ok": "ação 😀 👨‍👩‍👧"}
 
 
-def test_plain_is_sanitized(capsys):
-    output.emit([{"t": "a\x85b‮c​d"}, {"t": "ok"}], "plain")
-    out = capsys.readouterr().out
-    assert out == '{"t": "abcd"}\n{"t": "ok"}\n'
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"t": "a\x85b‮c​d"},
+        {"t": "a\x9b\"x", "to": "ok"},
+        {"t": "a\x1d\x9dtitle"},
+        {"a": "\x9dfoo", "admin": "false", "b": "\x9c\",\"admin\":\"true"},
+        {"t": "a\x9b\",\"admin\":\"true"},
+    ],
+)
+def test_plain_keeps_json_structure_and_escapes_hidden_chars(capsys, item):
+    output.emit([item, {"t": "ok"}], "plain")
+    lines = capsys.readouterr().out.splitlines()
+    assert [json.loads(line) for line in lines] == [item, {"t": "ok"}]
+    assert not any(c in lines[0] for c in ("\x85", "\x9b", "\x9c", "\x9d", "\x1d", "‮", "​"))
 
 
 # --- eprint de erro com dado de servidor ---
