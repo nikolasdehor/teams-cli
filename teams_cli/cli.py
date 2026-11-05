@@ -17,6 +17,7 @@ from . import __version__, auth, config
 from . import attachments as att
 from . import context as ctxmod
 from . import download as dl
+from . import message_ops as mo
 from . import xteams as xbe
 from .autolink import text_to_html
 from .graph import BASE as GRAPH_BASE, AuthExpired, Forbidden, Graph, GraphError, NotFound
@@ -166,6 +167,7 @@ def build_parser() -> argparse.ArgumentParser:
     cts.add_argument("chat_id", nargs="?", default=None)
     cts.add_argument("--to", default=None, help="email: usa ou cria o 1:1")
     _message_args(cts)
+    mo.add_parsers(ct_sub, ch_sub, gs)
     ctc = ct_sub.add_parser("create", parents=[gs], help="criar conversa (escrita)")
     ctc.add_argument("--members", required=True, help="emails separados por vírgula")
     ctc.add_argument("--topic", default=None)
@@ -631,9 +633,9 @@ def run_x_write(parsed: argparse.Namespace, xbin: str | None, timeout: float) ->
 def _x_conv(parsed: argparse.Namespace) -> str | None:
     """Conversa-alvo de um envio via xteams (None se não for envio por id)."""
     cmd, sub = parsed.cmd, getattr(parsed, "sub", None)
-    if cmd == "channel" and sub == "send":
+    if cmd == "channel" and sub in ("send", "reply"):
         return parsed.channel_id
-    if cmd == "chat" and sub == "send":
+    if cmd == "chat" and sub in ("send", "reply"):
         return parsed.chat_id
     return None
 
@@ -894,6 +896,16 @@ def _run_auth(parsed: argparse.Namespace, profile: config.Profile, settings: con
     return {"xteams": parsed.action, "exit": code}, EXIT_OK if code == 0 else EXIT_FAIL
 
 
+def _run_message_op(parsed: argparse.Namespace, profile: config.Profile, settings: config.Settings) -> Any:
+    """reply/edit: lê o alvo, confirma e escreve (lógica em message_ops)."""
+    xbin = xbe.find_bin()
+    graph = None
+    if _uses_graph(parsed, profile, settings):
+        graph = Graph(_graph_token(profile, xbin, settings.timeout, allow_xteams=False), settings.timeout)
+    ops = mo.Ops(xbin, settings.timeout, graph, _body, _read_text, _confirmed, _send_guard)
+    return mo.run_op(parsed, ops)
+
+
 def main(argv: list[str] | None = None) -> int:
     try:
         try:
@@ -906,6 +918,18 @@ def main(argv: list[str] | None = None) -> int:
         fmt = "json" if parsed.json else "plain" if parsed.plain else settings.output
         color = config.colors_allowed(parsed.no_color) and fmt == "human"
         profile = config.resolve_profile(parsed.profile, settings, parsed.client_id, parsed.tenant)
+
+        if (parsed.cmd, getattr(parsed, "sub", None)) in mo.COMMANDS:
+            try:
+                data = _run_message_op(parsed, profile, settings)
+            except mo.MessageOpError as exc:
+                eprint(f"erro: {exc}")
+                if exc.result is not None and not (parsed.quiet and fmt == "human"):
+                    emit(exc.result, fmt, color)
+                return EXIT_FAIL
+            if not (parsed.quiet and fmt == "human"):
+                emit(data, fmt, color)
+            return EXIT_OK
 
         if (
             parsed.cmd != "auth"
@@ -990,6 +1014,8 @@ def main(argv: list[str] | None = None) -> int:
                 emit(data, fmt, color)
                 if fmt == "human" and parsed.cmd in ("chat", "channel") and getattr(parsed, "sub", None) == "messages":
                     for line in att.render_human(data if isinstance(data, list) else []):
+                        print(line)
+                    for line in mo.render_ids(data):
                         print(line)
         return EXIT_OK
     except UsageError as exc:

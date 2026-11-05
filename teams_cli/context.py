@@ -350,7 +350,11 @@ def whoami(xbin: str | None, timeout: float) -> dict:
         return {}
     if not isinstance(data, dict):
         return {}
-    return {"name": data.get("name"), "email": data.get("user") or data.get("account")}
+    return {
+        "name": data.get("name"),
+        "email": data.get("user") or data.get("account"),
+        "id": data.get("mri") or data.get("id") or data.get("oid") or data.get("user_id"),
+    }
 
 
 def build_context(
@@ -474,7 +478,8 @@ def render_human(ctx: dict) -> list[str]:
     lines.append(f"mensagens (ordem por sequenceId, hora {ctx['timezone']}):")
     for m in ctx["messages"]:
         who = "eu" if m["is_me"] else (m["author"] or "?")
-        head = f"[{m['time_local'] or '?'}] #{m['seq'] if m['seq'] is not None else '-'} {who}"
+        id_part = f" id {m['id']}" if m["id"] else ""
+        head = f"[{m['time_local'] or '?'}] #{m['seq'] if m['seq'] is not None else '-'}{id_part} {who}"
         lines.append(head + ":")
         if m["reply_to"]:
             r = m["reply_to"]
