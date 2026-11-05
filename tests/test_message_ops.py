@@ -892,3 +892,177 @@ def test_no_id_none_in_outputs():
                          "text": "oi", "mentions": [], "attachments": [], "anomalies": []}]}
     lines = ctxmod.render_human(ctx)
     assert not any("id None" in ln for ln in lines)
+
+
+# --- achados do review: render_ids, citação no edit via Graph, 403 de canal ------------------------
+
+def test_render_ids_from_as_string_with_empty_author_does_not_crash():
+    msgs = [{"id": "5", "imdisplayname": "", "from": "8:orgid:abc", "content": "<p>oi</p>"},
+            {"id": "6", "from": None, "content": "x"}, {"id": "7", "from": {"user": "texto"}, "content": "y"}]
+    assert mo.render_ids(msgs) == ["ids (use em reply/edit):", "  5  ?: oi", "  6  ?: x", "  7  ?: y"]
+
+
+def test_chat_messages_human_survives_from_string(env, capsys):
+    env.put([m("1790000000001", "", "<p>oi</p>", **{"from": "https://x/8:orgid:abc"})])
+    assert run("chat", "messages", CHAT) == 0
+    assert "1790000000001  ?: oi" in capsys.readouterr().out
+
+
+def test_channel_messages_human_survives_from_string(env, capsys):
+    env.put([m("1790000000001", "", "<p>oi</p>", **{"from": "https://x/8:orgid:abc"})])
+    assert run("channel", "messages", "t1", CHAN) == 0
+    assert "1790000000001  ?: oi" in capsys.readouterr().out
+
+
+def _graph_edit(gnet, body, refs=None):
+    cp = CHAT.replace(":", "%3A").replace("@", "%40")
+    state = {"b": body}
+    extra = {"attachments": refs} if refs else {}
+    read = lambda: Resp(gmsg("100", ME, "u-me", state["b"], **extra))
+
+    def patch():
+        state["b"] = state["b"].rsplit("</p>", 1)[0].rsplit("<p>", 1)[0] + "<p>novo</p>"
+        return Resp(None, 204)
+
+    return gnet({**ME_ROUTE, ("GET", f"/me/chats/{cp}/messages/100"): read, ("PATCH", f"/chats/{cp}/messages/100"): patch})
+
+
+def test_graph_edit_keeps_leading_reply_blockquote(gnet):
+    net = _graph_edit(gnet, QUOTE + "<p>velho</p>")
+    assert run("--graph", "chat", "edit", CHAT, "100", "--message", "novo", "--yes") == 0
+    sent = net.writes()[0][2]["body"]["content"]
+    assert sent.startswith(QUOTE) and sent.count("<blockquote") == 1 and "novo" in sent
+
+
+def test_graph_edit_blockquote_plus_reference_is_not_duplicated(gnet):
+    ref = {"id": "99", "contentType": "messageReference", "content": "{}"}
+    net = _graph_edit(gnet, '<attachment id="99"></attachment>' + QUOTE + "<p>velho</p>", refs=[ref])
+    assert run("--graph", "chat", "edit", CHAT, "100", "--message", "novo", "--yes") == 0
+    sent = net.writes()[0][2]["body"]["content"]
+    assert sent.startswith('<attachment id="99"></attachment>' + QUOTE)
+    assert sent.count("<attachment") == 1 and sent.count("<blockquote") == 1
+
+
+def test_graph_channel_edit_403_names_missing_permission(gnet, capsys):
+    base = f"/teams/t1/channels/{CHAN.replace(':', '%3A').replace('@', '%40')}/messages"
+    msg = Resp(gmsg("200", ME, "u-me", "x"))
+    net = gnet({**ME_ROUTE, ("GET", f"{base}/200"): msg, ("PATCH", f"{base}/200"): Resp({"error": {"message": "no"}}, 403)})
+    assert run("--graph", "channel", "edit", "t1", CHAN, "200", "--message", "b", "--yes") == 1
+    err = capsys.readouterr().err
+    assert "ChannelMessage.ReadWrite" in err and "xteams" in err and "sem --graph" in err and "política do tenant" not in err
+    assert "pode faltar" in err and "bloqueio do tenant" in err
+    assert len(net.writes()) == 1
+
+
+def test_default_scopes_unchanged():
+    from teams_cli import auth
+
+    assert not any("ReadWrite.All" in s or s == "ChannelMessage.ReadWrite" for s in auth.SCOPES)
+
+
+# --- saída segura no terminal ---------------------------------------------------------------------
+
+AUTHOR = "Ana\x1b[2K\x1b]0;x\x07\nFALSA: [s/N] sim‮"
+TEXT = "a\x1b[2Kb\x1b]0;x\x07\x9b31m‮\x85 fim"
+BAD = ("\x1b", "\x07", "\x9b", "\x85", "‮", "[2K", "]0;x")
+
+
+def _clean(text):
+    assert not any(b in text for b in BAD), repr(text)
+    assert not any(ln.startswith("FALSA") for ln in text.splitlines()), repr(text)
+
+
+def test_chat_messages_human_is_clean(env, capsys):
+    env.put([m("1790000000001", AUTHOR, f"<p>{TEXT}</p>")])
+    assert run("chat", "messages", CHAT) == 0
+    out = capsys.readouterr().out
+    _clean(out)
+    assert "ab" in out and "Ana" in out
+
+
+def test_channel_messages_human_is_clean(env, capsys):
+    env.put([m("1790000000001", AUTHOR, f"<p>{TEXT}</p>")])
+    assert run("channel", "messages", "t1", CHAN) == 0
+    _clean(capsys.readouterr().out)
+
+
+def test_chat_context_human_is_clean(env, capsys):
+    env.put([m("1790000000001", AUTHOR, f"<p>{TEXT}</p>"),
+             m("1790000000002", "Bia", QUOTE.replace("Ana", AUTHOR).replace("oi antigo", TEXT) + "<p>resp</p>")])
+    assert run("chat", "context", CHAT, "--no-emails") == 0
+    out = capsys.readouterr().out
+    _clean(out)
+    assert "Ana" in out and "resp" in out
+
+
+def test_reply_plan_is_clean_and_author_is_one_line(env, capsys):
+    env.put([m("1790000000001", AUTHOR, f"<p>{TEXT}</p>")])
+    assert run("chat", "reply", CHAT, "1790000000001", "--message", "x", "--dry-run", "--recent-minutes", "0") == 0
+    err = capsys.readouterr().err
+    _clean(err)
+    plans = [ln for ln in err.splitlines() if "responder a" in ln]
+    assert len(plans) == 1 and "Ana FALSA: [s/N] sim" in plans[0]
+
+
+def test_reply_quote_sent_to_teams_has_no_controls(env):
+    env.put([m("1790000000001", AUTHOR, f"<p>{TEXT}</p>")])
+    assert run("chat", "reply", CHAT, "1790000000001", "--message", "x", "--yes", "--recent-minutes", "0") == 0
+    sent = env.calls("message", "new")[0]
+    quote = sent[sent.index("--content") + 1]
+    assert not any(b in quote for b in BAD) and "<strong>Ana FALSA" in quote
+    assert quote.endswith("x")  # o corpo da resposta segue igual
+
+
+def test_edit_plan_is_clean(env, capsys):
+    env.put([m("1790000000001", ME, f"<p>{TEXT}</p>")])
+    assert run("chat", "edit", CHAT, "1790000000001", "--message", "novo\x1b[2J", "--dry-run") == 0
+    err = capsys.readouterr().err
+    _clean(err)
+    assert "ANTES:" in err and "DEPOIS:" in err
+
+
+def test_edit_other_author_error_is_one_clean_line(env, capsys):
+    env.put([m("1790000000001", AUTHOR, "<p>x</p>")])
+    assert run("chat", "edit", CHAT, "1790000000001", "--message", "novo", "--yes") == 1
+    err = capsys.readouterr().err
+    _clean(err)
+    assert len([ln for ln in err.splitlines() if "a mensagem é de" in ln]) == 1
+
+
+def test_describe_last_author_cannot_fake_a_line():
+    lines = ctxmod.describe_last([m("1790000000001", AUTHOR, f"<p>{TEXT}</p>")], ME)
+    assert len(lines) == 1
+    _clean(lines[0])
+
+
+def test_json_output_stays_valid_without_raw_esc(env, capsys):
+    env.put([m("1790000000001", AUTHOR, f"<p>{TEXT}</p>")])
+    assert run("chat", "messages", CHAT, "--json") == 0
+    out = capsys.readouterr().out
+    assert "\x1b" not in out and "\x07" not in out
+    assert json.loads(out)[0]["imdisplayname"] == AUTHOR  # dado bruto intacto para máquina
+
+
+# --- terminal: id, raiz e tipo vindos do servidor não forjam linha ---
+
+def _evil_target(**kw):
+    from teams_cli.message_read import Target
+
+    base = dict(id="1\nFALSA", author="Ana", author_id="u", mri=None, html="<p>a</p>", text="a", mentions=[],
+                attachments=[], root_id="9\nRAIZ‮", prefix="", refs=[], mtype="x\x1b[2K\nTIPO‮")
+    return Target(**{**base, **kw})
+
+
+def test_check_safety_mtype_is_single_line(capsys):
+    from argparse import Namespace
+
+    mo._check_safety(_evil_target(), Namespace(force=True))
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1 and "‮" not in err and "\x1b" not in err and "x TIPO" in err.replace("[2K", "")
+
+
+def test_root_note_is_single_line():
+    from argparse import Namespace
+
+    note = mo._root_note(Namespace(cmd="channel"), _evil_target(), False)
+    assert "\n" not in note and "‮" not in note and "RAIZ" in note

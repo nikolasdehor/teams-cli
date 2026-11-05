@@ -437,3 +437,27 @@ def test_xteams_token_fallback_follows_resolved_profile(env, capsys, monkeypatch
     img.write_bytes(PNG)
     rc, _, _ = run(capsys, "chat", "send", "h1", "--message", "oi", "--file", str(img), "--yes")
     assert rc == cli.EXIT_AUTH and seen == [allowed]
+
+
+# --- terminal: entidades HTML não recriam controles na saída humana ---
+
+def test_chat_messages_html_entities_cannot_forge_lines(env, capsys, monkeypatch):
+    evil = [{"id": "300", "sequenceId": "300", "messagetype": "RichText/Html", "imdisplayname": "Ana",
+             "originalarrivaltime": "2026-10-19T10:00:00.0000000Z",
+             "content": "<b>x</b>&#10;FALSA&#13;&#x202e;&#x2028;&#12;&#x200b;fim"}]
+    path = env / "evil.json"
+    path.write_text(json.dumps(evil), encoding="utf-8")
+    monkeypatch.setenv("FAKE_X_MSGS", str(path))
+    rc, out, _ = run(capsys, "chat", "messages", "c1")
+    assert rc == 0 and "x" in out and "FALSA" in out and "fim" in out
+    assert not any(c in out for c in ("\r", "\x0c", "‮", " ", "​"))
+    assert not any(line.lstrip().startswith("FALSA") for line in out.splitlines())
+
+
+def test_server_error_message_cannot_forge_stderr_line(env, capsys, monkeypatch):
+    def boom(*a, **k):
+        raise xbe.XteamsError("falha\nerro: FORJADO\x1b[2K")
+
+    monkeypatch.setattr(cli, "run_x", boom)
+    rc, _, err = run(capsys, "chat", "messages", "c1")
+    assert rc == cli.EXIT_FAIL and err == "erro: falha erro: FORJADO\n"

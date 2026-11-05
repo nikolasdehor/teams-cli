@@ -20,7 +20,7 @@ from . import context as ctxmod
 from . import xteams as xbe
 from .graph import AuthExpired, Forbidden, Graph, GraphError, GraphNetworkError
 from .message_read import MessageOpError, Ops, Target, clip, conv_of, graph_path, q, read_target, x_root
-from .output import eprint
+from .output import eprint, safe_display
 
 __all__ = ["COMMANDS", "MessageOpError", "Ops", "add_parsers", "quote_html", "render_ids", "run_op"]
 
@@ -32,6 +32,11 @@ SLEEP: Callable[[float], None] = time.sleep  # trocado nos testes
 FORBIDDEN_MSG = (
     "sem permissão para editar (403): a política do tenant pode bloquear a edição de mensagens "
     "ou a mensagem é de outra pessoa."
+)
+CHANNEL_FORBIDDEN_MSG = (
+    "sem permissão para editar mensagem de canal pelo Graph (403): pode faltar a permissão "
+    "ChannelMessage.ReadWrite (o login padrão não a inclui) ou haver bloqueio do tenant. "
+    "Tente o motor xteams (rode o comando sem --graph)."
 )
 _NET_RE = re.compile(r"timed? ?out|timeout|connection|network|dns|unreachable|reset by peer|error sending request", re.I)
 _TEXT_TYPES = {"", "text", "richtext", "richtext/html", "message"}
@@ -82,12 +87,21 @@ def add_parsers(ct_sub: Any, ch_sub: Any, gs: argparse.ArgumentParser) -> None:
 
 # --- citação e resultado -----------------------------------------------------------
 
+def _line(text: str) -> str:
+    """Texto do servidor como linha única, sem controles de terminal (autor, prévia, plano)."""
+    return safe_display(text, single_line=True)
+
+
+def _clip_line(text: str, limit: int) -> str:
+    return clip(_line(text), limit)
+
+
 def quote_html(t: Target) -> str:
     """Citação no formato `schema.skype.com/Reply`; autor e prévia sempre escapados."""
     mid = html.escape(t.id, quote=True)
     mri = f' itemprop="mri" itemid="{html.escape(t.mri, quote=True)}"' if t.mri else ""
-    author = html.escape(t.author or "Desconhecido")
-    preview = html.escape(clip(t.text, PREVIEW_MAX))
+    author = html.escape(_line(t.author or "Desconhecido"))
+    preview = html.escape(_clip_line(t.text, PREVIEW_MAX))
     return (
         f'<blockquote itemscope="" itemtype="http://schema.skype.com/Reply" itemid="{mid}">'
         f'<strong{mri}>{author}</strong><span itemprop="time" itemid="{mid}"></span>'
@@ -115,6 +129,8 @@ def _attempt(parsed: argparse.Namespace, fn: Callable[[], Any], result: dict, ed
     except xbe.XteamsAuthError:
         raise
     except Forbidden as exc:
+        if edit and parsed.cmd == "channel":
+            raise MessageOpError(f"{CHANNEL_FORBIDDEN_MSG} Detalhe: {exc}") from None
         if edit:
             raise MessageOpError(f"{FORBIDDEN_MSG} Detalhe: {exc}") from None
         raise
@@ -140,7 +156,7 @@ def _require_root(parsed: argparse.Namespace, ops: Ops, t: Target, reply: bool) 
 
 def _root_note(parsed: argparse.Namespace, t: Target, reply: bool) -> str:
     root = t.root_id or (t.id if reply else None)
-    return f" [thread: raiz {root}]" if parsed.cmd == "channel" and root else ""
+    return f" [thread: raiz {_line(root)}]" if parsed.cmd == "channel" and root else ""
 
 
 # --- reply ---------------------------------------------------------------------------
@@ -150,8 +166,8 @@ def _graph_reply(parsed: argparse.Namespace, graph: Graph, t: Target, content: s
         root = t.root_id or t.id
         path = f"/teams/{q(parsed.team_id)}/channels/{q(parsed.channel_id)}/messages/{q(root)}/replies"
         return graph.post(path, {"body": {"contentType": "html", "content": content}})
-    sender = {"user": {"userIdentityType": "aadUser", "id": t.author_id, "displayName": t.author}}
-    ref = {"messageId": t.id, "messagePreview": clip(t.text, PREVIEW_MAX), "messageSender": sender}
+    sender = {"user": {"userIdentityType": "aadUser", "id": t.author_id, "displayName": _line(t.author or "")}}
+    ref = {"messageId": t.id, "messagePreview": _clip_line(t.text, PREVIEW_MAX), "messageSender": sender}
     payload = {
         "body": {"contentType": "html", "content": f'<attachment id="{html.escape(t.id, quote=True)}"></attachment>{content}'},
         "attachments": [{"id": t.id, "contentType": "messageReference", "content": json.dumps(ref, ensure_ascii=False)}],
@@ -196,9 +212,9 @@ def _reply(parsed: argparse.Namespace, ops: Ops, t: Target, text: str) -> dict:
     _check_reply_target(parsed, ops, t)
     if ops.graph is None:
         ops.guard(parsed, ops.xbin, ops.timeout)
-    who = t.author or "Desconhecido"
+    who = _line(t.author or "Desconhecido")
     plan = (f'responder a {who} em {conv_of(parsed)}{_root_note(parsed, t, True)}: '
-            f'"{clip(t.text, PREVIEW_MAX)}" ({len(text)} chars)')
+            f'"{_clip_line(t.text, PREVIEW_MAX)}" ({len(text)} chars)')
     if not ops.confirmed(plan, parsed):
         return _skipped("sent", parsed, t)
     _, content = ops.body(parsed, text)
@@ -252,7 +268,7 @@ def _authorship(t: Target, me: Me) -> str:
 def _check_author(t: Target, me: Me, force: bool) -> None:
     verdict = _authorship(t, me)
     if verdict == "other":
-        raise MessageOpError(f"a mensagem é de {t.author or 'outra pessoa'}, não sua: só dá para editar mensagens suas.")
+        raise MessageOpError(f"a mensagem é de {_line(t.author or 'outra pessoa')}, não sua: só dá para editar mensagens suas.")
     if verdict == "unknown":
         if not force:
             raise MessageOpError(
@@ -265,12 +281,12 @@ def _check_author(t: Target, me: Me, force: bool) -> None:
 def _check_safety(t: Target, parsed: argparse.Namespace) -> None:
     problems: list[str] = []
     if t.attachments:
-        names = ", ".join(a.get("name") or a.get("kind") or "?" for a in t.attachments)
+        names = _line(", ".join(a.get("name") or a.get("kind") or "?" for a in t.attachments))
         problems.append(f"tem anexo/imagem ({names}) que a edição perderia")
     if t.mentions:
-        problems.append(f"tem menção a {', '.join(t.mentions)} que a edição perderia")
+        problems.append(f"tem menção a {_line(', '.join(t.mentions))} que a edição perderia")
     if t.mtype.strip().lower() not in _TEXT_TYPES:
-        problems.append(f"não é texto simples (tipo {t.mtype})")
+        problems.append(f"não é texto simples (tipo {_line(t.mtype)})")
     if not problems:
         return
     if not parsed.force:
@@ -328,9 +344,9 @@ def _edit(parsed: argparse.Namespace, ops: Ops, t: Target, text: str) -> dict:
     if new.strip() == t.html.strip():
         raise MessageOpError("o texto novo é igual ao atual: nada a editar.")
     plan = (
-        f"editar a mensagem {t.id} em {conv_of(parsed)}{_root_note(parsed, t, False)}:\n"
-        f"  ANTES:  {clip(t.text, PLAN_MAX)}\n"
-        f"  DEPOIS: {clip(ctxmod.parse_content(new)['text'], PLAN_MAX)}"
+        f"editar a mensagem {_line(t.id)} em {conv_of(parsed)}{_root_note(parsed, t, False)}:\n"
+        f"  ANTES:  {_clip_line(t.text, PLAN_MAX)}\n"
+        f"  DEPOIS: {_clip_line(ctxmod.parse_content(new)['text'], PLAN_MAX)}"
     )
     if not ops.confirmed(plan, parsed):
         return _skipped("edited", parsed, t)
@@ -352,6 +368,14 @@ def run_op(parsed: argparse.Namespace, ops: Ops) -> dict:
 
 # --- ids visíveis ------------------------------------------------------------------------
 
+def _graph_author(m: dict) -> str:
+    """imdisplayname (xteams) ou from.user.displayName (Graph); `from` em string/None vira '?'."""
+    frm = m.get("from")
+    user = frm.get("user") if isinstance(frm, dict) else None
+    graph_name = user.get("displayName") if isinstance(user, dict) else None
+    return m.get("imdisplayname") or graph_name or "?"
+
+
 def render_ids(messages: Any) -> list[str]:
     """Uma linha por mensagem com o id aceito por `reply`/`edit` (xteams e Graph)."""
     lines: list[str] = []
@@ -360,7 +384,6 @@ def render_ids(messages: Any) -> list[str]:
             continue
         body = m.get("body") if isinstance(m.get("body"), dict) else {}
         raw = body.get("content") if body else m.get("content")
-        author = m.get("imdisplayname") or (((m.get("from") or {}).get("user")) or {}).get("displayName") or "?"
         text = ctxmod.parse_content(raw if isinstance(raw, str) else "")["text"]
-        lines.append(f"  {m['id']}  {author}: {clip(text, 60)}")
+        lines.append(f"  {_line(str(m['id']))}  {_line(_graph_author(m))}: {_clip_line(text, 60)}")
     return (["ids (use em reply/edit):", *lines]) if lines else []
