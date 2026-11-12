@@ -168,6 +168,8 @@ def get_token(xteams: str | None, kind: str, timeout: float = 60.0) -> str:
 
 _CHAT_SERVICE_HOST = re.compile(r"^([a-z0-9-]+\.)+msg\.teams\.microsoft\.com$", re.I)
 _MAX_PAGE = 200
+_PAGE_MARGIN = 20  # mensagens novas chegam entre a listagem do xteams e o GET e empurram as antigas da página
+_MAX_SINGLE = 20  # teto de GETs individuais para as mensagens que ainda ficaram fora da página
 
 
 def _chat_service_get(xteams: str | None, path: str, params: dict, timeout: float) -> Any:
@@ -191,6 +193,25 @@ def _chat_service_get(xteams: str | None, path: str, params: dict, timeout: floa
         raise XteamsError("chat service devolveu resposta inválida")
 
 
+def _fetch_missing(xteams: str | None, base: str, todo: list, found: Any, timeout: float) -> list:
+    """Busca uma a uma as mensagens pedidas que a página não trouxe; o que não der certo vira aviso."""
+    have = {str(m["id"]) for m in found or [] if isinstance(m, dict) and m.get("id")}
+    missing = [str(m["id"]) for m in todo if str(m["id"]) not in have]
+    got, failed = [], len(missing) - min(len(missing), _MAX_SINGLE)
+    for mid in missing[:_MAX_SINGLE]:
+        try:
+            data = _chat_service_get(xteams, f"{base}/{quote(mid, safe='')}", {}, timeout)
+        except XteamsError:
+            failed += 1
+            continue
+        if isinstance(data, dict):
+            got.append(data)
+    if failed:
+        eprint(f"aviso: não consegui ler os arquivos anexos de {failed} mensagem(ns); anexos podem estar incompletos",
+               single_line=True)
+    return got
+
+
 def add_files(xteams: str | None, conv: str, msgs: Any, timeout: float) -> Any:
     """Acrescenta `properties.files` às mensagens do xteams (dict ou lista). Falha só avisa."""
     items = [msgs] if isinstance(msgs, dict) else msgs
@@ -204,9 +225,10 @@ def add_files(xteams: str | None, conv: str, msgs: Any, timeout: float) -> Any:
             found = [data] if isinstance(data, dict) else []
         else:
             data = _chat_service_get(
-                xteams, base, {"pageSize": str(min(max(len(items), 1), _MAX_PAGE)), "startTime": "1"}, timeout
+                xteams, base, {"pageSize": str(min(len(items) + _PAGE_MARGIN, _MAX_PAGE)), "startTime": "1"}, timeout
             )
             found = data.get("messages") if isinstance(data, dict) else []
+            found = list(found or []) + _fetch_missing(xteams, base, todo, found, timeout)
     except XteamsError as exc:
         eprint(f"aviso: não consegui ler os arquivos anexos das mensagens ({exc}); anexos podem estar incompletos",
                single_line=True)

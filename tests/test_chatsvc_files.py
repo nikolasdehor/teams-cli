@@ -189,3 +189,49 @@ def test_chat_service_failure_warns_but_keeps_messages(env, monkeypatch, capsys)
     rc, out, err = run(capsys, "chat", "messages", CHAT, "--json")
     assert rc == 0 and len(json.loads(out)) == 3
     assert "aviso" in err and "arquivos" in err and "SKYPE-TOK" not in err
+
+
+def _racing_chatsvc(monkeypatch, newer, calls, broken=()):
+    """Chat service que respeita `pageSize` (mais nova primeiro) e já tem `newer` mensagens além das do xteams."""
+    fresh = [{"id": str(1000 + i), "messagetype": "RichText/Html", "content": "<p>nova</p>"} for i in range(newer)]
+    store = fresh + SVC_MSGS["messages"]
+
+    def get(url, headers=None, params=None, timeout=None, **kw):
+        calls.append({"url": url, "params": dict(params or {})})
+        tail = url.rsplit("/messages", 1)[1].strip("/")
+        if tail:
+            found = [m for m in store if m["id"] == tail and tail not in broken]
+            return R(200, js=found[0]) if found else R(404)
+        return R(200, js={"messages": store[: int(params["pageSize"])]})
+
+    monkeypatch.setattr(xbe.requests, "get", get)
+
+
+@pytest.mark.parametrize("newer", [1, 30])
+def test_add_files_survives_message_arriving_after_listing(env, monkeypatch, newer):
+    calls = []
+    _racing_chatsvc(monkeypatch, newer, calls)
+    msgs = [dict(m) for m in X_MSGS]
+    xbe.add_files(None, CHAT, msgs, 10)
+    got = [a["name"] for m in msgs for a in att.extract_from_xteams(m)]
+    assert got == ["deck 1.pptx", "application.pptx"]
+    assert calls[0]["params"]["pageSize"] == str(len(X_MSGS) + xbe._PAGE_MARGIN)
+
+
+def test_add_files_warns_when_single_fetch_fails(env, monkeypatch, capsys):
+    _racing_chatsvc(monkeypatch, 30, [], broken=("100",))
+    msgs = [dict(m) for m in X_MSGS]
+    xbe.add_files(None, CHAT, msgs, 10)
+    err = capsys.readouterr().err
+    assert "aviso" in err and "1 mensagem" in err and "SKYPE-TOK" not in err
+    assert [a["name"] for m in msgs for a in att.extract_from_xteams(m)] == ["application.pptx"]
+
+
+def test_add_files_warns_when_missing_exceed_single_cap(env, monkeypatch, capsys):
+    calls = []
+    _racing_chatsvc(monkeypatch, 100, calls)
+    msgs = [{"id": str(5000 + i), "messagetype": "Text", "content": "x"} for i in range(25)] + [dict(m) for m in X_MSGS]
+    xbe.add_files(None, CHAT, msgs, 10)
+    singles = [c for c in calls if c["url"].rsplit("/messages", 1)[1].strip("/")]
+    assert len(singles) == xbe._MAX_SINGLE
+    assert "aviso" in capsys.readouterr().err
