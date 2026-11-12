@@ -32,6 +32,14 @@ class XteamsNetworkError(XteamsError):
     """Falha de rede/timeout numa chamada HTTP: insistir no mesmo host não adianta."""
 
 
+class XteamsServerError(XteamsError):
+    """Chat service respondeu HTTP 5xx: numa escrita, o resultado é desconhecido."""
+
+
+class XteamsBadOutput(XteamsError):
+    """O xteams saiu com sucesso, mas a saída não é JSON: numa escrita, ela já foi feita."""
+
+
 class XteamsNotFound(XteamsError):
     """Binário xteams não encontrado."""
 
@@ -68,7 +76,7 @@ def run(xteams: str | None, args: list[str], timeout: float) -> Any:
     try:
         return json.loads(proc.stdout or "null")
     except json.JSONDecodeError:
-        raise XteamsError(f"xteams retornou JSON inválido: {proc.stdout[:200]}")
+        raise XteamsBadOutput(f"xteams retornou JSON inválido: {proc.stdout[:200]}")
 
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -176,25 +184,44 @@ _PAGE_MARGIN = 20  # mensagens novas chegam entre a listagem do xteams e o GET e
 _MAX_SINGLE = 20  # teto de GETs individuais para as mensagens que ainda ficaram fora da página
 
 
-def _chat_service_get(xteams: str | None, path: str, params: dict, timeout: float) -> Any:
+def chat_service(
+    xteams: str | None, method: str, path: str, params: dict, timeout: float, body: dict | None = None,
+) -> Any:
+    """GET/DELETE no chat service com o skype token do xteams, só em `*.msg.teams.microsoft.com` (HTTPS, sem redirect).
+
+    GET devolve o JSON (200); DELETE aceita 200/204 e devolve None.
+    """
     token = get_token(xteams, "skype", timeout)
     base = str(((_load_cache().get("skype") or {}).get("chat_service")) or "").rstrip("/")
     parsed = urlparse(base)
     if parsed.scheme != "https" or not _CHAT_SERVICE_HOST.match(parsed.hostname or ""):
         raise XteamsError("endereço do chat service não confiável")
+    delete = method == "DELETE"
+    send = requests.delete if delete else requests.get
+    extra = {"json": body} if body is not None else {}
     try:
-        resp = requests.get(
+        resp = send(
             base + path, params=params, headers={"Authentication": f"skypetoken={token}"},
-            timeout=timeout, allow_redirects=False,
+            timeout=timeout, allow_redirects=False, **extra,
         )
     except requests.RequestException as exc:
         raise XteamsNetworkError(f"falha de rede ({type(exc).__name__})")
-    if resp.status_code != 200:
+    if resp.status_code == 401:
+        raise XteamsAuthError("sem login no xteams (HTTP 401). Rode `teams auth login` e aprove o código.")
+    if resp.status_code >= 500:
+        raise XteamsServerError(f"chat service respondeu HTTP {resp.status_code}")
+    if resp.status_code not in ((200, 204) if delete else (200,)):
         raise XteamsError(f"chat service respondeu HTTP {resp.status_code}")
+    if delete:
+        return None
     try:
         return resp.json()
     except ValueError:
         raise XteamsError("chat service devolveu resposta inválida")
+
+
+def _chat_service_get(xteams: str | None, path: str, params: dict, timeout: float) -> Any:
+    return chat_service(xteams, "GET", path, params, timeout)
 
 
 def _fetch_missing(xteams: str | None, base: str, todo: list, found: Any, timeout: float) -> list:

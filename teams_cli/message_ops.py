@@ -22,7 +22,7 @@ from .graph import AuthExpired, Forbidden, Graph, GraphError, GraphNetworkError
 from .message_read import MessageOpError, Ops, Target, clip, conv_of, graph_path, q, read_target, x_root
 from .output import eprint, safe_display
 
-__all__ = ["COMMANDS", "MessageOpError", "Ops", "add_parsers", "quote_html", "render_ids", "run_op"]
+__all__ = ["COMMANDS", "MessageOpError", "Ops", "add_parsers", "attempt", "me", "norm_name", "quote_html", "render_ids", "run_op"]
 
 COMMANDS = {("chat", "reply"), ("chat", "edit"), ("channel", "reply"), ("channel", "edit")}
 PREVIEW_MAX = 120
@@ -122,7 +122,7 @@ def _unknown(parsed: argparse.Namespace, reason: str, result: dict) -> MessageOp
     )
 
 
-def _attempt(parsed: argparse.Namespace, fn: Callable[[], Any], result: dict, edit: bool = False) -> Any:
+def attempt(parsed: argparse.Namespace, fn: Callable[[], Any], result: dict, edit: bool = False) -> Any:
     """Roda a escrita UMA vez (sem retry). Timeout/rede = resultado desconhecido; 403 de edit é acionável."""
     try:
         return fn()
@@ -134,7 +134,7 @@ def _attempt(parsed: argparse.Namespace, fn: Callable[[], Any], result: dict, ed
         if edit:
             raise MessageOpError(f"{FORBIDDEN_MSG} Detalhe: {exc}") from None
         raise
-    except (xbe.XteamsTimeout, GraphNetworkError) as exc:
+    except (xbe.XteamsTimeout, xbe.XteamsNetworkError, xbe.XteamsServerError, GraphNetworkError) as exc:
         raise _unknown(parsed, f"tempo esgotado ou falha de rede na escrita ({exc})", result) from None
     except xbe.XteamsError as exc:
         text = str(exc)
@@ -221,7 +221,7 @@ def _reply(parsed: argparse.Namespace, ops: Ops, t: Target, text: str) -> dict:
     base = {"sent": None, "dry_run": False, "declined": False, "reply_to": t.id, "conversation": conv_of(parsed)}
     send = (lambda: _graph_reply(parsed, ops.graph, t, content)) if ops.graph is not None else (
         lambda: _x_reply(parsed, ops, t, content))
-    resp = _attempt(parsed, send, base)
+    resp = attempt(parsed, send, base)
     if not isinstance(resp, dict) or not resp.get("id"):
         raise _unknown(parsed, "o servidor não devolveu o id da mensagem enviada", base)
     if parsed.cmd == "channel" and ops.graph is None:
@@ -235,12 +235,12 @@ def _norm_id(value: str) -> str:
     return value.strip().lower().removeprefix("8:orgid:")
 
 
-def _norm_name(value: str) -> str:
+def norm_name(value: str) -> str:
     plain = unicodedata.normalize("NFKD", value)
     return " ".join("".join(c for c in plain if not unicodedata.combining(c)).casefold().split())
 
 
-def _me(ops: Ops) -> Me:
+def me(ops: Ops) -> Me:
     """Quem sou eu. Falha de auth propaga (exit 3); outras falhas viram 'não sei'."""
     if ops.graph is not None:
         try:
@@ -255,13 +255,16 @@ def _me(ops: Ops) -> Me:
     return Me(who.get("name"), frozenset({_norm_id(str(who["id"]))} if who.get("id") else ()))
 
 
+_attempt, _norm_name, _me = attempt, norm_name, me  # nomes antigos (compatibilidade)
+
+
 def _authorship(t: Target, me: Me) -> str:
     """'mine', 'other' ou 'unknown': id/MRI quando houver; nome (sem acento/caixa) só como último recurso."""
     theirs = {_norm_id(x) for x in (t.author_id, t.mri) if x}
     if me.ids and theirs:
         return "mine" if me.ids & theirs else "other"
     if me.name and t.author:
-        return "mine" if _norm_name(me.name) == _norm_name(t.author) else "other"
+        return "mine" if norm_name(me.name) == norm_name(t.author) else "other"
     return "unknown"
 
 
@@ -305,7 +308,7 @@ def _write_edit(parsed: argparse.Namespace, ops: Ops, t: Target, new: str, resul
         else:
             xbe.run(ops.xbin, ["message", "edit", conv_of(parsed), t.id, "--content", new, "-I", "html"], ops.timeout)
 
-    _attempt(parsed, write, result, edit=True)
+    attempt(parsed, write, result, edit=True)
 
 
 def _flat(text: str) -> str:
@@ -336,7 +339,7 @@ def _verify(parsed: argparse.Namespace, ops: Ops, before: Target, new: str, base
 
 
 def _edit(parsed: argparse.Namespace, ops: Ops, t: Target, text: str) -> dict:
-    _check_author(t, _me(ops), parsed.force)
+    _check_author(t, me(ops), parsed.force)
     _check_safety(t, parsed)
     _require_root(parsed, ops, t, reply=False)
     _, content = ops.body(parsed, text)
