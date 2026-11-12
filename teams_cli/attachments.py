@@ -379,7 +379,7 @@ def _from_properties(message_id: Any, props: Any) -> list[dict]:
         if not isinstance(f, dict):
             continue
         info = f.get("fileInfo") if isinstance(f.get("fileInfo"), dict) else {}
-        url = f.get("objectUrl") or info.get("fileUrl") or f.get("shareUrl")
+        url = info.get("shareUrl") or f.get("shareUrl") or f.get("objectUrl") or info.get("fileUrl")
         name = f.get("fileName") or f.get("title")
         mime = _mime_for(name)
         out.append(_att(
@@ -523,6 +523,8 @@ def annotate(messages: Any, engine: str = "xteams") -> Any:
     for m in messages:
         if isinstance(m, dict):
             m["attachments"] = extract(m, engine)
+            if engine == "xteams":
+                m.pop("properties", None)  # só o insumo dos anexos: o JSON bruto de files não vai para a saída
     return messages
 
 

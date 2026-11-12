@@ -1,0 +1,191 @@
+"""Issue #7: o xteams descarta `properties`, então arquivos do OneDrive/SharePoint sumiam.
+
+Os anexos agora vêm de `properties.files` do chat service (GET, só leitura), com a resposta bruta
+real anonimizada abaixo.
+"""
+
+import json
+import stat
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from teams_cli import attachments as att
+from teams_cli import cli
+from teams_cli import download as dl
+from teams_cli import xteams as xbe
+
+from test_download import R  # noqa: E402
+
+FAKE_X = Path(__file__).resolve().parent / "fake_xteams.py"
+CHAT = "19:aaaa_bbbb@unq.gbl.spaces"
+SVC = "https://amer.ng.msg.teams.microsoft.com"
+SITE = "https://contoso-my.sharepoint.com/personal/ana_contoso_com"
+
+
+def _file(item, name):
+    url = f"{SITE}/Documents/Arquivos%20de%20Chat/{name}"
+    return json.dumps([{
+        "itemid": item, "fileName": name, "fileType": "pptx", "type": "pptx", "title": name,
+        "fileInfo": {"itemId": "01ABC", "fileUrl": url, "siteUrl": SITE + "/", "serverRelativeUrl": "",
+                     "shareUrl": f"https://contoso-my.sharepoint.com/:p:/g/personal/ana_contoso_com/IQ{item}?email=eu%40contoso.com",
+                     "shareId": "s1"},
+        "@type": "http://schema.skype.com/File", "objectUrl": url, "openUrl": None, "state": "active",
+        "sharepointIds": {"driveId": "b!x", "listItemUniqueId": item},
+    }])
+
+
+# resposta real do chat service (campos irrelevantes cortados), mais nova primeiro
+SVC_MSGS = {"messages": [
+    {"id": "200", "sequenceId": 2, "messagetype": "RichText/Html", "content": "<p>api</p>",
+     "imdisplayname": "Ana", "originalarrivaltime": "2026-11-12T16:43:31.1570000Z",
+     "properties": {"mentions": "[]", "cards": "[]", "links": "[]", "files": _file("i2", "application.pptx")}},
+    {"id": "100", "sequenceId": 1, "messagetype": "RichText/Html", "content": "<p>chat</p>",
+     "imdisplayname": "Ana", "originalarrivaltime": "2026-11-12T16:43:25.0220000Z",
+     "properties": {"mentions": "[]", "cards": "[]", "links": "[]", "files": _file("i1", "deck 1.pptx")}},
+    {"id": "99", "sequenceId": 0, "messagetype": "RichText/Html", "content": "<p>oi</p>",
+     "imdisplayname": "Ana", "originalarrivaltime": "2026-11-12T16:40:00.0000000Z",
+     "properties": {"mentions": "[]", "cards": "[]", "links": "[]", "files": "[]"}},
+]}
+
+# o que o xteams devolve: a mesma mensagem, sem `properties`
+X_MSGS = [{k: v for k, v in m.items() if k != "properties"} for m in reversed(SVC_MSGS["messages"])]
+
+ZIP = b"PK\x03\x04" + b"z" * 40
+
+
+@pytest.fixture()
+def env(monkeypatch, tmp_path):
+    FAKE_X.chmod(FAKE_X.stat().st_mode | stat.S_IEXEC)
+    msgs = tmp_path / "msgs.json"
+    msgs.write_text(json.dumps(X_MSGS), encoding="utf-8")
+    cache = tmp_path / "cache.json"
+    future = time.time() + 3600
+    cache.write_text(json.dumps({
+        "skype": {"skype_token": "SKYPE-TOK", "expires_at": future, "chat_service": SVC},
+        "access_tokens": {"https://graph.microsoft.com": {"token": "GRAPH-TOK", "expires_at": future}},
+    }))
+    monkeypatch.setenv("TEAMS_XTEAMS_BIN", str(FAKE_X))
+    monkeypatch.setenv("TEAMS_XTEAMS_CACHE", str(cache))
+    monkeypatch.setenv("FAKE_X_MSGS", str(msgs))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    return tmp_path
+
+
+def chatsvc(monkeypatch, status=200, calls=None):
+    def get(url, headers=None, params=None, timeout=None, **kw):
+        if calls is not None:
+            calls.append({"url": url, "headers": dict(headers or {}), "params": dict(params or {})})
+        if status != 200:
+            return R(status)
+        tail = url.rsplit("/messages", 1)[1]
+        if tail.strip("/"):
+            found = [m for m in SVC_MSGS["messages"] if m["id"] == tail.strip("/")]
+            return R(200, js=found[0]) if found else R(404)
+        return R(200, js=SVC_MSGS)
+
+    monkeypatch.setattr(xbe.requests, "get", get)
+
+
+def net(monkeypatch):
+    def route(method, url, headers=None, **kw):
+        if "/driveItem/content" in url:
+            return R(200, ZIP, {"Content-Length": str(len(ZIP))})
+        if "graph.microsoft.com" in url:
+            return R(200, js={"name": "deck.pptx", "size": len(ZIP), "file": {"mimeType": "x"}})
+        return R(404)
+
+    monkeypatch.setattr(dl.requests, "request", route)
+
+
+def run(capsys, *argv):
+    rc = cli.main(list(argv))
+    out = capsys.readouterr()
+    return rc, out.out, out.err
+
+
+def test_add_files_merges_properties_from_chat_service(env, monkeypatch):
+    chatsvc(monkeypatch)
+    msgs = [dict(m) for m in X_MSGS]
+    xbe.add_files(None, CHAT, msgs, 10)
+    assert [m["id"] for m in msgs] == ["99", "100", "200"]
+    got = [a for m in msgs for a in att.extract_from_xteams(m)]
+    assert [(a["kind"], a["name"], a["downloadable"]) for a in got] == [
+        ("file", "deck 1.pptx", True), ("file", "application.pptx", True)]
+    assert got[0]["url"].startswith("https://contoso-my.sharepoint.com/")
+
+
+def test_chat_messages_json_lists_files(env, capsys, monkeypatch):
+    chatsvc(monkeypatch)
+    rc, out, _ = run(capsys, "chat", "messages", CHAT, "--json")
+    data = {m["id"]: m for m in json.loads(out)}
+    assert rc == 0 and data["99"]["attachments"] == []
+    a = data["100"]["attachments"][0]
+    assert (a["kind"], a["name"], a["mime"], a["source"], a["downloadable"]) == (
+        "file", "deck 1.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "sharepoint", True)
+    assert data["200"]["attachments"][0]["name"] == "application.pptx"
+
+
+def test_chat_messages_sizes_resolved(env, capsys, monkeypatch):
+    chatsvc(monkeypatch)
+    net(monkeypatch)
+    rc, out, _ = run(capsys, "chat", "messages", CHAT, "--json", "--sizes")
+    assert [a["size"] for m in json.loads(out) for a in m["attachments"]] == [len(ZIP)] * 2
+
+
+def test_chat_context_marks_attachment(env, capsys, monkeypatch):
+    chatsvc(monkeypatch)
+    rc, out, _ = run(capsys, "chat", "context", CHAT, "--no-emails")
+    assert rc == 0 and "anexo: [file] deck 1.pptx" in out and "anexo: [file] application.pptx" in out
+
+
+def test_chat_download_saves_files(env, capsys, monkeypatch):
+    chatsvc(monkeypatch)
+    net(monkeypatch)
+    out_dir = env / "baixados"
+    rc, out, err = run(capsys, "chat", "download", CHAT, "--out", str(out_dir))
+    assert rc == 0
+    names = sorted(p.name for p in out_dir.iterdir())
+    assert names == ["100_01_deck.pptx", "200_01_deck.pptx"]
+    assert all((out_dir / n).read_bytes() == ZIP for n in names)
+    assert "GRAPH-TOK" not in out + err and "SKYPE-TOK" not in out + err
+
+
+def test_chat_download_single_message(env, capsys, monkeypatch):
+    chatsvc(monkeypatch)
+    net(monkeypatch)
+    rc, out, _ = run(capsys, "chat", "download", CHAT, "--out", str(env / "o"), "--message", "200", "--json")
+    res = json.loads(out)
+    assert rc == 0 and [(r["message_id"], r["status"]) for r in res] == [("200", "ok")]
+
+
+def test_skype_token_goes_only_to_the_chat_service(env, monkeypatch, capsys):
+    calls = []
+    chatsvc(monkeypatch, calls=calls)
+    run(capsys, "chat", "messages", CHAT, "--json")
+    assert len(calls) == 1 and calls[0]["url"].startswith(SVC + "/v1/users/ME/conversations/")
+    assert calls[0]["headers"] == {"Authentication": "skypetoken=SKYPE-TOK"}
+
+
+def test_untrusted_chat_service_host_never_gets_the_token(env, monkeypatch, capsys):
+    cache = Path(env / "cache.json")
+    data = json.loads(cache.read_text())
+    data["skype"]["chat_service"] = "https://evil.example.com"
+    cache.write_text(json.dumps(data))
+    calls = []
+    chatsvc(monkeypatch, calls=calls)
+    rc, out, err = run(capsys, "chat", "messages", CHAT, "--json")
+    assert rc == 0 and calls == [] and "aviso" in err
+    assert all(m["attachments"] == [] for m in json.loads(out))
+
+
+def test_chat_service_failure_warns_but_keeps_messages(env, monkeypatch, capsys):
+    chatsvc(monkeypatch, status=500)
+    rc, out, err = run(capsys, "chat", "messages", CHAT, "--json")
+    assert rc == 0 and len(json.loads(out)) == 3
+    assert "aviso" in err and "arquivos" in err and "SKYPE-TOK" not in err

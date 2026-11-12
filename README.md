@@ -145,7 +145,7 @@ O que é reconhecido:
 | `kind` | Origem | Baixa? |
 |---|---|---|
 | `image` | imagem colada (AMS do Teams) e `hostedContents` do Graph | sim (token do xteams) |
-| `file` / `video` / `image` | arquivo compartilhado do OneDrive/SharePoint (`sharepoint`) | sim, se você tem acesso ao arquivo |
+| `file` / `video` / `image` | arquivo compartilhado do OneDrive/SharePoint (`sharepoint`), inclusive o anexo "Anexar arquivo" do chat (`properties.files`) | sim, se você tem acesso ao arquivo |
 | `recording` | gravação de reunião (link do SharePoint) | sim, se o dono permitir download e ficar sob `--max-mb` |
 | `card` | cartão adaptativo (bots): texto extraído | grava um `.txt` com o texto |
 | `audio` | mensagem de voz/áudio (AMS) | sim (melhor esforço) |
@@ -357,6 +357,8 @@ teams --profile pessoal chats --limit 5
   por isso o padrão é xteams.
 - `chat messages`/`channel messages` leem no máximo 200 mensagens por chamada
   via xteams (50 via Graph); `chat context` sempre lê 200 e exibe `--limit`.
+- O xteams não devolve `properties`: os arquivos anexados vêm de uma leitura extra (GET) no chat service com o
+  token do xteams. Se ela falhar, a CLI avisa em stderr e lista só o que está no corpo da mensagem.
 - Link de compartilhamento do anexo enviado é best-effort; veja "Enviar imagens e arquivos".
 - Contas pessoais têm suporte parcial a Teams no Graph.
 

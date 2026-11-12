@@ -9,6 +9,11 @@ import shutil
 import subprocess
 import time
 from typing import Any
+from urllib.parse import quote, urlparse
+
+import requests
+
+from .output import eprint
 
 
 class XteamsError(Exception):
@@ -153,3 +158,64 @@ def get_token(xteams: str | None, kind: str, timeout: float = 60.0) -> str:
     if not token or exp - time.time() < 5:
         raise XteamsAuthError("token do xteams vencido. Rode `teams auth login`.")
     return token
+
+
+# --- arquivos anexados (properties.files) --------------------------------------------
+#
+# O xteams descarta `properties` das mensagens, e é lá que o Teams guarda os arquivos do
+# OneDrive/SharePoint (o `content` vem só com o texto). O chat service devolve o campo; fazemos um
+# GET de leitura com o skype token do próprio xteams e acrescentamos só `properties.files`.
+
+_CHAT_SERVICE_HOST = re.compile(r"^([a-z0-9-]+\.)+msg\.teams\.microsoft\.com$", re.I)
+_MAX_PAGE = 200
+
+
+def _chat_service_get(xteams: str | None, path: str, params: dict, timeout: float) -> Any:
+    token = get_token(xteams, "skype", timeout)
+    base = str(((_load_cache().get("skype") or {}).get("chat_service")) or "").rstrip("/")
+    parsed = urlparse(base)
+    if parsed.scheme != "https" or not _CHAT_SERVICE_HOST.match(parsed.hostname or ""):
+        raise XteamsError("endereço do chat service não confiável")
+    try:
+        resp = requests.get(
+            base + path, params=params, headers={"Authentication": f"skypetoken={token}"},
+            timeout=timeout, allow_redirects=False,
+        )
+    except requests.RequestException as exc:
+        raise XteamsError(f"falha de rede ({type(exc).__name__})")
+    if resp.status_code != 200:
+        raise XteamsError(f"chat service respondeu HTTP {resp.status_code}")
+    try:
+        return resp.json()
+    except ValueError:
+        raise XteamsError("chat service devolveu resposta inválida")
+
+
+def add_files(xteams: str | None, conv: str, msgs: Any, timeout: float) -> Any:
+    """Acrescenta `properties.files` às mensagens do xteams (dict ou lista). Falha só avisa."""
+    items = [msgs] if isinstance(msgs, dict) else msgs
+    todo = [m for m in items if isinstance(m, dict) and m.get("id") and "properties" not in m] if isinstance(items, list) else []
+    if not todo:
+        return msgs
+    base = f"/v1/users/ME/conversations/{quote(conv, safe='')}/messages"
+    try:
+        if isinstance(msgs, dict):
+            data = _chat_service_get(xteams, f"{base}/{quote(str(msgs['id']), safe='')}", {}, timeout)
+            found = [data] if isinstance(data, dict) else []
+        else:
+            data = _chat_service_get(
+                xteams, base, {"pageSize": str(min(max(len(items), 1), _MAX_PAGE)), "startTime": "1"}, timeout
+            )
+            found = data.get("messages") if isinstance(data, dict) else []
+    except XteamsError as exc:
+        eprint(f"aviso: não consegui ler os arquivos anexos das mensagens ({exc}); anexos podem estar incompletos",
+               single_line=True)
+        return msgs
+    files = {
+        str(m["id"]): (m.get("properties") or {}).get("files")
+        for m in found or [] if isinstance(m, dict) and m.get("id")
+    }
+    for m in todo:
+        if files.get(str(m["id"])):
+            m["properties"] = {"files": files[str(m["id"])]}
+    return msgs

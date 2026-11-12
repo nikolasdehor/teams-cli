@@ -375,7 +375,7 @@ def build_context(
     me = whoami(xbin, timeout)
     # -O keep: HTML bruto, o único formato com <img>, URIObject e <attachment> para extrair anexos
     raw = xbe.run(xbin, ["message", "list", chat_id, "-n", str(MAX_WINDOW), "-O", "keep"], timeout)
-    msgs = normalize_messages(raw if isinstance(raw, list) else [])
+    msgs = xbe.add_files(xbin, chat_id, normalize_messages(raw if isinstance(raw, list) else []), timeout)
     meta = _find_chat_meta(xbin, chat_id, timeout)
     title = ((meta.get("threadProperties") or {}).get("topic")) or None
     members, pending = infer_members(chat_id, msgs, me.get("name"))

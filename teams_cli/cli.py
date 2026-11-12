@@ -573,7 +573,7 @@ def run_x(parsed: argparse.Namespace, xbin: str | None, timeout: float, fmt: str
     if cmd == "channel" and sub == "messages":
         limit = _check_limit(parsed.limit, "limit", 1, ctxmod.MAX_WINDOW)
         raw = xbe.run(xbin, ["message", "list", parsed.channel_id, "-n", str(limit), "-O", out], timeout)
-        msgs = ctxmod.normalize_messages(raw)
+        msgs = xbe.add_files(xbin, parsed.channel_id, ctxmod.normalize_messages(raw), timeout)
         return _with_attachments(msgs, "xteams", parsed, _x_downloader(xbin, timeout)), None
     if cmd == "channel" and sub == "send":
         _, desc = _send_payload(parsed, None)
@@ -581,7 +581,7 @@ def run_x(parsed: argparse.Namespace, xbin: str | None, timeout: float, fmt: str
     if cmd == "chat" and sub == "messages":
         limit = _check_limit(parsed.limit, "limit", 1, ctxmod.MAX_WINDOW)
         raw = xbe.run(xbin, ["message", "list", parsed.chat_id, "-n", str(limit), "-O", out], timeout)
-        msgs = ctxmod.normalize_messages(raw)
+        msgs = xbe.add_files(xbin, parsed.chat_id, ctxmod.normalize_messages(raw), timeout)
         return _with_attachments(msgs, "xteams", parsed, _x_downloader(xbin, timeout)), None
     if cmd == "chat" and sub == "context":
         limit = _check_limit(parsed.limit, "limit", 1, ctxmod.MAX_WINDOW)
@@ -752,14 +752,15 @@ def _fetch_for_download(parsed, xbin, timeout, graph: Graph | None) -> tuple[lis
         try:
             one = xbe.run(xbin, ["message", "read", parsed.chat_id, parsed.message, "-O", "keep"], timeout)
             if isinstance(one, dict):
-                return [one], "xteams"
+                return [xbe.add_files(xbin, parsed.chat_id, one, timeout)], "xteams"
         except xbe.XteamsAuthError:
             raise
         except xbe.XteamsError:
             pass  # cai para a janela de mensagens
         limit = ctxmod.MAX_WINDOW
     raw = xbe.run(xbin, ["message", "list", parsed.chat_id, "-n", str(limit), "-O", "keep"], timeout)
-    return ctxmod.normalize_messages(raw if isinstance(raw, list) else []), "xteams"
+    msgs = ctxmod.normalize_messages(raw if isinstance(raw, list) else [])
+    return xbe.add_files(xbin, parsed.chat_id, msgs, timeout), "xteams"
 
 
 def run_download(parsed: argparse.Namespace, profile: config.Profile, settings: config.Settings) -> tuple[list[dict], int]:
