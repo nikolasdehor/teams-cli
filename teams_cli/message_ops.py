@@ -18,7 +18,7 @@ from typing import Any, Callable
 
 from . import context as ctxmod
 from . import xteams as xbe
-from .graph import AuthExpired, Forbidden, Graph, GraphError, GraphNetworkError
+from .graph import AuthExpired, Forbidden, Graph, GraphError, GraphNetworkError, GraphServerError
 from .message_read import MessageOpError, Ops, Target, clip, conv_of, graph_path, q, read_target, x_root
 from .output import eprint, safe_display
 
@@ -134,7 +134,8 @@ def attempt(parsed: argparse.Namespace, fn: Callable[[], Any], result: dict, edi
         if edit:
             raise MessageOpError(f"{FORBIDDEN_MSG} Detalhe: {exc}") from None
         raise
-    except (xbe.XteamsTimeout, xbe.XteamsNetworkError, xbe.XteamsServerError, GraphNetworkError) as exc:
+    except (xbe.XteamsTimeout, xbe.XteamsNetworkError, xbe.XteamsServerError, GraphNetworkError,
+            GraphServerError) as exc:
         raise _unknown(parsed, f"tempo esgotado ou falha de rede na escrita ({exc})", result) from None
     except xbe.XteamsError as exc:
         text = str(exc)

@@ -18,6 +18,10 @@ class GraphNetworkError(GraphError):
     """Timeout ou falha de rede: numa escrita, o resultado é desconhecido."""
 
 
+class GraphServerError(GraphError):
+    """5xx: numa escrita, o servidor pode ter aplicado a mudança; resultado desconhecido."""
+
+
 class AuthExpired(GraphError):
     """401: token expirado. Vira exit 3 no CLI."""
 
@@ -91,6 +95,8 @@ class Graph:
             raise NotFound(f"não encontrado: {path}")
         if resp.status_code == 429:
             raise GraphError("rate limit do Graph. Aguarde um pouco e tente de novo.")
+        if resp.status_code >= 500:
+            raise GraphServerError(f"Graph {resp.status_code} em {path}: {detail}")
         raise GraphError(f"Graph {resp.status_code} em {path}: {detail}")
 
     def get(self, path: str, params: dict | None = None) -> Any:

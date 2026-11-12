@@ -481,3 +481,11 @@ def test_graph_confirmation_read_failure_is_unverified(gnet, capsys):
 def test_reactions_module_uses_only_public_names_of_message_ops():
     from teams_cli import message_ops as mo
     assert mo._attempt is mo.attempt and mo._me is mo.me and mo._norm_name is mo.norm_name  # aliases antigos
+
+
+@pytest.mark.parametrize("status", [500, 502, 503])
+def test_graph_react_5xx_is_unknown(gnet, capsys, status):
+    gnet({("GET", f"/me/chats/{CQ}/messages/100"): Resp(gmsg("100", "Ana", "u", "x")),
+          ("POST", f"/chats/{CQ}/messages/100/setReaction"): Resp({"error": {"message": "x"}}, status)})
+    assert run("--graph", "chat", "react", CHAT, "100", "like", "--yes") == 1
+    assert "resultado desconhecido" in capsys.readouterr().err
