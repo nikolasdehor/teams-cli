@@ -28,6 +28,10 @@ class XteamsTimeout(XteamsError):
     """O xteams não respondeu a tempo: numa escrita, o resultado é desconhecido."""
 
 
+class XteamsNetworkError(XteamsError):
+    """Falha de rede/timeout numa chamada HTTP: insistir no mesmo host não adianta."""
+
+
 class XteamsNotFound(XteamsError):
     """Binário xteams não encontrado."""
 
@@ -184,7 +188,7 @@ def _chat_service_get(xteams: str | None, path: str, params: dict, timeout: floa
             timeout=timeout, allow_redirects=False,
         )
     except requests.RequestException as exc:
-        raise XteamsError(f"falha de rede ({type(exc).__name__})")
+        raise XteamsNetworkError(f"falha de rede ({type(exc).__name__})")
     if resp.status_code != 200:
         raise XteamsError(f"chat service respondeu HTTP {resp.status_code}")
     try:
@@ -197,10 +201,19 @@ def _fetch_missing(xteams: str | None, base: str, todo: list, found: Any, timeou
     """Busca uma a uma as mensagens pedidas que a página não trouxe; o que não der certo vira aviso."""
     have = {str(m["id"]) for m in found or [] if isinstance(m, dict) and m.get("id")}
     missing = [str(m["id"]) for m in todo if str(m["id"]) not in have]
-    got, failed = [], len(missing) - min(len(missing), _MAX_SINGLE)
-    for mid in missing[:_MAX_SINGLE]:
+    batch = missing[:_MAX_SINGLE]
+    got, failed = [], len(missing) - len(batch)
+    deadline = time.monotonic() + timeout  # orçamento total: N GETs lentos não somam N timeouts
+    for i, mid in enumerate(batch):
+        left = deadline - time.monotonic()
+        if left <= 0:
+            failed += len(batch) - i
+            break
         try:
-            data = _chat_service_get(xteams, f"{base}/{quote(mid, safe='')}", {}, timeout)
+            data = _chat_service_get(xteams, f"{base}/{quote(mid, safe='')}", {}, left)
+        except XteamsNetworkError:
+            failed += len(batch) - i  # rede/timeout: as demais iriam falhar do mesmo jeito
+            break
         except XteamsError:
             failed += 1
             continue
@@ -210,6 +223,19 @@ def _fetch_missing(xteams: str | None, base: str, todo: list, found: Any, timeou
         eprint(f"aviso: não consegui ler os arquivos anexos de {failed} mensagem(ns); anexos podem estar incompletos",
                single_line=True)
     return got
+
+
+def _files_of(msg: dict) -> Any:
+    """`properties.files` da mensagem do chat service se vier no formato esperado (lista ou JSON de lista)."""
+    props = msg.get("properties")
+    files = props.get("files") if isinstance(props, dict) else None
+    if isinstance(files, str):
+        try:
+            loaded = json.loads(files)
+        except ValueError:
+            return None
+        return files if isinstance(loaded, list) and loaded else None
+    return files if isinstance(files, list) and files else None
 
 
 def add_files(xteams: str | None, conv: str, msgs: Any, timeout: float) -> Any:
@@ -227,17 +253,15 @@ def add_files(xteams: str | None, conv: str, msgs: Any, timeout: float) -> Any:
             data = _chat_service_get(
                 xteams, base, {"pageSize": str(min(len(items) + _PAGE_MARGIN, _MAX_PAGE)), "startTime": "1"}, timeout
             )
-            found = data.get("messages") if isinstance(data, dict) else []
-            found = list(found or []) + _fetch_missing(xteams, base, todo, found, timeout)
+            found = data.get("messages") if isinstance(data, dict) else None
+            found = found if isinstance(found, list) else []  # resposta malformada: ignora
+            found = found + _fetch_missing(xteams, base, todo, found, timeout)
     except XteamsError as exc:
         eprint(f"aviso: não consegui ler os arquivos anexos das mensagens ({exc}); anexos podem estar incompletos",
                single_line=True)
         return msgs
-    files = {
-        str(m["id"]): (m.get("properties") or {}).get("files")
-        for m in found or [] if isinstance(m, dict) and m.get("id")
-    }
+    files = {str(m["id"]): f for m in found if isinstance(m, dict) and m.get("id") and (f := _files_of(m))}
     for m in todo:
-        if files.get(str(m["id"])):
+        if str(m["id"]) in files:
             m["properties"] = {"files": files[str(m["id"])]}
     return msgs

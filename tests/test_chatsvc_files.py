@@ -9,6 +9,7 @@ import stat
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -79,7 +80,8 @@ def env(monkeypatch, tmp_path):
 def chatsvc(monkeypatch, status=200, calls=None):
     def get(url, headers=None, params=None, timeout=None, **kw):
         if calls is not None:
-            calls.append({"url": url, "headers": dict(headers or {}), "params": dict(params or {})})
+            calls.append({"url": url, "headers": dict(headers or {}), "params": dict(params or {}),
+                          "allow_redirects": kw.get("allow_redirects")})
         if status != 200:
             return R(status)
         tail = url.rsplit("/messages", 1)[1]
@@ -170,6 +172,16 @@ def test_skype_token_goes_only_to_the_chat_service(env, monkeypatch, capsys):
     run(capsys, "chat", "messages", CHAT, "--json")
     assert len(calls) == 1 and calls[0]["url"].startswith(SVC + "/v1/users/ME/conversations/")
     assert calls[0]["headers"] == {"Authentication": "skypetoken=SKYPE-TOK"}
+    assert calls[0]["allow_redirects"] is False
+
+
+def test_chat_service_redirect_is_not_followed(env, monkeypatch, capsys):
+    calls = []
+    chatsvc(monkeypatch, status=302, calls=calls)
+    rc, out, err = run(capsys, "chat", "messages", CHAT, "--json")
+    assert rc == 0 and len(calls) == 1 and calls[0]["allow_redirects"] is False
+    assert "aviso" in err and "302" in err and "SKYPE-TOK" not in err
+    assert len(json.loads(out)) == 3
 
 
 def test_untrusted_chat_service_host_never_gets_the_token(env, monkeypatch, capsys):
@@ -235,3 +247,62 @@ def test_add_files_warns_when_missing_exceed_single_cap(env, monkeypatch, capsys
     singles = [c for c in calls if c["url"].rsplit("/messages", 1)[1].strip("/")]
     assert len(singles) == xbe._MAX_SINGLE
     assert "aviso" in capsys.readouterr().err
+
+
+def test_add_files_stops_single_fetches_at_first_network_error(env, monkeypatch, capsys):
+    calls = []
+
+    def get(url, headers=None, params=None, timeout=None, **kw):
+        calls.append(url)
+        if url.rsplit("/messages", 1)[1].strip("/"):
+            raise xbe.requests.Timeout("lento")
+        return R(200, js={"messages": []})
+
+    monkeypatch.setattr(xbe.requests, "get", get)
+    msgs = [dict(m) for m in X_MSGS]
+    xbe.add_files(None, CHAT, msgs, 10)
+    singles = [c for c in calls if c.rsplit("/messages", 1)[1].strip("/")]
+    assert len(singles) == 1
+    err = capsys.readouterr().err
+    assert err.count("aviso") == 1 and "3 mensagem" in err
+
+
+def test_add_files_single_fetch_budget_is_shared(env, monkeypatch, capsys):
+    clock, timeouts = [100.0], []
+
+    def get(url, headers=None, params=None, timeout=None, **kw):
+        if not url.rsplit("/messages", 1)[1].strip("/"):
+            return R(200, js={"messages": []})
+        timeouts.append(timeout)
+        clock[0] += 6  # cada GET gasta 6 s do orçamento de 10 s
+        return R(404)
+
+    monkeypatch.setattr(xbe.requests, "get", get)
+    monkeypatch.setattr(xbe, "time", SimpleNamespace(monotonic=lambda: clock[0], time=time.time))
+    msgs = [dict(m) for m in X_MSGS]
+    xbe.add_files(None, CHAT, msgs, 10)
+    assert timeouts == [10, 4]  # o terceiro GET não sai: orçamento esgotado
+    assert "aviso" in capsys.readouterr().err
+
+
+MALFORMED = [
+    {"messages": 7},
+    {"messages": "x"},
+    {"messages": [7, None, "m", ["id"]]},
+    {"messages": [{"id": "100", "properties": "inválido"}]},
+    {"messages": [{"id": "100", "properties": {"files": 7}}]},
+    {"messages": [{"id": "100", "properties": {"files": {"a": 1}}}]},
+    {"messages": [{"id": "100", "properties": {"files": "não é json"}}]},
+    {"messages": [{"id": "100", "properties": {"files": "7"}}]},
+    7,
+    [],
+]
+
+
+@pytest.mark.parametrize("payload", MALFORMED)
+def test_add_files_ignores_malformed_responses(env, monkeypatch, payload):
+    monkeypatch.setattr(xbe.requests, "get", lambda url, **kw: R(200, js=payload))
+    msgs = [dict(m) for m in X_MSGS]
+    assert xbe.add_files(None, CHAT, msgs, 10) == X_MSGS
+    one = dict(X_MSGS[1])
+    assert xbe.add_files(None, CHAT, one, 10) == X_MSGS[1]

@@ -176,7 +176,9 @@ igualmente espaçados mais um sprite (`*_sprite.jpg`, grade com todos); com
 
 - Tokens do xteams/Graph são lidos em memória e só enviados a hosts conhecidos
   (`*.asm.skype.com`, `*.asyncgw.teams.microsoft.com`, `graph.microsoft.com`), só na
-  primeira requisição (nunca em redirects) e jamais impressos ou registrados.
+  primeira requisição (nunca em redirects) e jamais impressos ou registrados. O skype
+  token também vai ao chat service (`*.msg.teams.microsoft.com`, só HTTPS e sem seguir
+  redirect) para ler os arquivos anexados.
 - Tudo que é baixado é **conteúdo de terceiros, não confiável**: nada é executado,
   o nome informado pelo remetente é sanitizado (sem `../`, sem separadores, sem
   controle, sem arquivo oculto), o destino é aberto sem seguir symlink e sem
@@ -190,11 +192,12 @@ igualmente espaçados mais um sprite (`*_sprite.jpg`, grade com todos); com
 
 ### Limitações
 
-- O xteams 0.3.0 não entrega `properties` da mensagem: cartões de bot enviados como
-  `<attachment>` e arquivos anexados "nativamente" por clientes que só preenchem
-  `properties.files` aparecem como `kind: unknown` (com `note`); use `--graph`
-  (Graph resolve `attachments`) quando precisar. Cartões do tipo `Media_Card`
-  (Swift), imagens coladas, links do OneDrive/SharePoint e gravações funcionam.
+- O xteams 0.3.0 não entrega `properties` da mensagem; os arquivos anexados (`properties.files`)
+  são lidos do chat service e aparecem como anexos de arquivo. Se essa leitura falhar, sai um
+  aviso em stderr e eles ficam de fora (use `--graph` nesse caso). Cartões de bot enviados como
+  `<attachment>` continuam como `kind: unknown` (com `note`); `--graph` (Graph resolve
+  `attachments`) cobre esse caso. Cartões do tipo `Media_Card` (Swift), imagens coladas, links do
+  OneDrive/SharePoint e gravações funcionam.
 - Gravações de reunião costumam ser só visualização para quem não é o organizador:
   o SharePoint responde 403 e o `reason` explica. Quando baixam, passam de 50 MB:
   suba `--max-mb`.
