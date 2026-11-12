@@ -46,6 +46,9 @@ teams chat reply CHAT_ID MSG_ID --message T      # xteams (citação); Graph com
 teams chat edit CHAT_ID MSG_ID --message T       # xteams; Graph com --graph/perfil
 teams channel reply TEAM_ID CHANNEL_ID MSG_ID [--root RAIZ] --message T  # xteams (thread); Graph com --graph
 teams channel edit TEAM_ID CHANNEL_ID MSG_ID [--root RAIZ] --message T   # xteams; Graph com --graph
+teams chat react CHAT_ID MSG_ID EMOJI [--remove]  # xteams; Graph com --graph/perfil
+teams channel react TEAM_ID CHANNEL_ID MSG_ID EMOJI [--root RAIZ] [--remove]  # xteams; Graph com --graph
+teams activity [--limit N] [--since TEMPO]       # xteams: não lidas e menções (Graph: só não lidas)
 teams chat create --members A,B                  # Graph
 teams people search QUERY                        # xteams
 teams meetings [list] [--days N]                 # xteams
@@ -178,7 +181,8 @@ igualmente espaçados mais um sprite (`*_sprite.jpg`, grade com todos); com
   (`*.asm.skype.com`, `*.asyncgw.teams.microsoft.com`, `graph.microsoft.com`), só na
   primeira requisição (nunca em redirects) e jamais impressos ou registrados. O skype
   token também vai ao chat service (`*.msg.teams.microsoft.com`, só HTTPS e sem seguir
-  redirect) para ler os arquivos anexados.
+  redirect) para ler os arquivos anexados, remover reação (`react --remove`) e listar não lidas e
+  menções (`activity`).
 - Tudo que é baixado é **conteúdo de terceiros, não confiável**: nada é executado,
   o nome informado pelo remetente é sanitizado (sem `../`, sem separadores, sem
   controle, sem arquivo oculto), o destino é aberto sem seguir symlink e sem
@@ -260,6 +264,68 @@ Comportamento (vale para os dois motores):
   pois exige o id do remetente.
 - Texto puro passa pelo mesmo `_body` do `send` (escape + links); autor e trecho da citação são
   sempre escapados.
+
+## Reagir e ver o que precisa de atenção
+
+```
+teams chat react CHAT_ID MSG_ID like --dry-run
+teams chat react CHAT_ID MSG_ID heart --yes
+teams chat react CHAT_ID MSG_ID like --remove --yes
+teams channel react TEAM_ID CHANNEL_ID MSG_ID 👍 --yes
+teams --graph channel react TEAM_ID CHANNEL_ID MSG_ID 🎉 --root RAIZ --yes
+teams activity                       # não lidas e menções
+teams activity --since 2h --limit 10 --json
+```
+
+**`react`**: `EMOJI` é uma chave (`like`, `heart`, `laugh`, `surprised`, `sad`, `angry`) ou um único emoji
+unicode (`👍` vira `like`). Qualquer outro texto é erro de uso (exit 2). O xteams só reage com as seis
+chaves; outros emojis exigem `--graph`. Mesmas guardas de `reply`/`edit`: a mensagem-alvo é lida antes,
+`--dry-run` mostra o plano sem escrever, confirmação ou `--yes`, `--no-input` respeitado, sem retry
+(timeout, falha de rede e HTTP 5xx viram "resultado desconhecido": `unknown: true`, confira antes de
+repetir). Saída: `{"action": "add"|"remove", "reaction", "key", "id", "conversation", "done", "verified",
+"dry_run", "declined"}`. `done` = a reação foi enviada; `verified` = a releitura da mensagem (xteams: chat
+service, `properties.emotions`; Graph: `reactions`) mostrou o efeito. Sem confirmação o comando sai com 0,
+`verified: false` e o aviso "reação enviada, não confirmada" em stderr; a releitura nunca refaz a escrita.
+Saída do xteams que não é JSON também dá `verified: false`; JSON com `error` é falha. HTTP 401 do chat
+service é falha de login (exit 3); 403 é falha comum. Em canal, `--root` vale para resposta de thread no Graph.
+
+| Ação | xteams (padrão) | Graph |
+|---|---|---|
+| reagir | `message react CONVERSA MSG CHAVE` | `POST .../messages/{m}/setReaction` com `{"reactionType": EMOJI}` |
+| `--remove` | chat service `DELETE /v1/users/ME/conversations/{c}/messages/{m}/properties?name=emotions` com `{"emotions": {"key": CHAVE}}` | `POST .../messages/{m}/unsetReaction` |
+
+O `--remove` pelo xteams não existe no xteams 0.3.0: o CLI chama o chat service direto, com o skype token,
+só em host `*.msg.teams.microsoft.com` (HTTPS, sem seguir redirect). Esse caminho não foi validado ao vivo;
+se o servidor recusar, o erro sugere `--graph`.
+
+**`activity`** (só leitura): lista o que pede atenção, mais novo primeiro, em duas seções.
+
+- **Não lidas**: conversas cuja última mensagem (que não é sua) é mais nova que a sua última leitura.
+  xteams: chat service `GET /v1/users/ME/conversations`, comparando `lastMessage.id` com o primeiro campo
+  de `consumptionhorizon` (suposição: ambos em ms, mesma escala). Graph: `/me/chats?$expand=lastMessagePreview`
+  com `viewpoint.lastMessageReadDateTime`.
+- **Menções**: xteams: conversa `48:notifications` (atividades do tipo menção). O Graph não tem API
+  equivalente: com `--graph` só saem as não lidas, com aviso em stderr.
+- `--limit N` (1-50, padrão 20) vale por seção; `--since` aceita `30m`, `2h`, `3d` ou data ISO (vazio ou
+  número gigante é erro de uso, exit 2). Item sem horário não é descartado pelo `--since`: aparece com `?`.
+- Cada fonte examina só os 50 mais recentes (conversas e notificações); se vier cheia ou com paginação, o
+  aviso "só os 50 mais recentes foram examinados" diz que pode haver mais. No Graph as conversas vêm
+  ordenadas por `lastMessagePreview/createdDateTime desc`.
+- Limite conhecido: só a última mensagem de cada conversa é examinada; se ela for de sistema (entrada ou
+  saída de membro), mascara não lidas anteriores daquela conversa.
+- Falha parcial é visível: se uma fonte falhar, o aviso vai para stderr e o resto é devolvido. `--json`
+  devolve `{"items": [...], "failed": ["não lidas" | "menções"], "warnings": [...]}` e `--plain` uma linha
+  JSON com esse mesmo objeto; cada item tem `kind`, `chat`, `chat_id`, `message_id`, `author`, `preview` e
+  `when`. `failed` vazio e `items` vazio quer dizer "nada pendente"; `failed` preenchido quer dizer "não
+  consegui ler essa fonte". Na saída humana a fonte que falhou vira a linha final "(menções indisponível,
+  veja o aviso acima)" e, sem itens, a mensagem é "nada nas fontes que responderam" (nunca "nada precisa
+  da sua atenção").
+- Exit code: 0 se pelo menos uma fonte respondeu (mesmo com `failed` preenchido); 1 se nenhuma respondeu
+  (stdout vazio); 3 em falha de login (inclusive HTTP 401 do chat service); 2 em uso inválido.
+- Avisos que também entram em `warnings`: conversas sem marcador de leitura (`consumptionhorizon`
+  ausente/ilegível ou `lastMessage.id` não numérico: "não avaliei"; se todas, a fonte `não lidas` falha),
+  notificações ilegíveis (se todas, a fonte `menções` falha), identidade desconhecida ("não sei quem sou;
+  mensagens suas podem aparecer como não lidas") e formatos inesperados ignorados, com a contagem.
 
 ## Enviar imagens e arquivos
 

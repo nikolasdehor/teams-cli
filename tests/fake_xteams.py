@@ -26,6 +26,8 @@ def main(args):
         return 1
     if args[:2] == ["auth", "status"]:
         status = {"account": "user@work.com", "user": "user@work.com", "name": "Eu Mesmo", "mode": "device-code"}
+        if os.environ.get("FAKE_X_NO_ME"):  # sem nome nem id: não dá para saber quem sou
+            status = {"account": "user@work.com"}
         if os.environ.get("FAKE_X_ME_ID"):
             status["id"] = os.environ["FAKE_X_ME_ID"]
         out(status)
@@ -74,6 +76,18 @@ def main(args):
                     m["content"] = args[args.index("--content") + 1]
             json.dump(msgs, open(path, "w"))
         out({"id": args[3], "conversation": args[2]})
+        return 0
+    if args[:2] == ["message", "react"]:
+        if os.environ.get("FAKE_X_REACT_FAIL"):
+            sys.stderr.write(f"Error: {os.environ['FAKE_X_REACT_FAIL']}\n")
+            return 1
+        if os.environ.get("FAKE_X_REACT_ERRJSON"):  # exit 0, mas o JSON traz `error`
+            out({"error": "message not found"})
+            return 0
+        if os.environ.get("FAKE_X_REACT_TEXT"):  # sucesso com saída que não é JSON
+            sys.stdout.write("Reacted.\n")
+            return 0
+        out({"conversation": args[2], "message_id": args[3], "emoji": args[4]})
         return 0
     if args[:2] == ["message", "new"] and os.environ.get("FAKE_X_NEW_FAIL"):
         sys.stderr.write("Error: servidor recusou\n")

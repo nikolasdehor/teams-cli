@@ -13,15 +13,18 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from . import __version__, auth, config
+from . import __version__, activity as act, auth, config
 from . import attachments as att
 from . import context as ctxmod
 from . import download as dl
 from . import message_ops as mo
+from . import reactions as rx
 from . import xteams as xbe
 from .autolink import text_to_html
+from .errors import UsageError
 from .graph import BASE as GRAPH_BASE, AuthExpired, Forbidden, Graph, GraphError, NotFound
 from .output import emit, eprint, print_lines, safe_display, unwrap_collection
+from .timeparse import msg_when as _msg_when, parse_since
 
 EXIT_OK = 0
 EXIT_FAIL = 1
@@ -36,10 +39,7 @@ WRITE_CMDS = {
     ("chat", "create"),
     ("meeting", "create"),
 }
-
-
-class UsageError(Exception):
-    """Uso inválido: mensagem curta + exit 2."""
+_OP_COMMANDS = mo.COMMANDS | rx.COMMANDS | act.COMMANDS
 
 
 def _q(value: str) -> str:
@@ -168,6 +168,7 @@ def build_parser() -> argparse.ArgumentParser:
     cts.add_argument("--to", default=None, help="email: usa ou cria o 1:1")
     _message_args(cts)
     mo.add_parsers(ct_sub, ch_sub, gs)
+    rx.add_parsers(ct_sub, ch_sub, gs)
     ctc = ct_sub.add_parser("create", parents=[gs], help="criar conversa (escrita)")
     ctc.add_argument("--members", required=True, help="emails separados por vírgula")
     ctc.add_argument("--topic", default=None)
@@ -189,6 +190,7 @@ def build_parser() -> argparse.ArgumentParser:
     mtc.add_argument("--tz", default="America/Sao_Paulo")
     mtc.add_argument("--no-online", action="store_true", help="evento sem link Teams")
     mtc.add_argument("--provider", default="teamsForBusiness")
+    act.add_parser(sub, gs)
     return p
 
 
@@ -690,30 +692,6 @@ def _send_guard(parsed: argparse.Namespace, xbin: str | None, timeout: float) ->
         )
 
 
-_SINCE = re.compile(r"^(\d+)\s*([smhd])$", re.I)
-
-
-def parse_since(value: str, now: datetime | None = None) -> datetime:
-    """'30m', '2h', '3d' (relativo a agora) ou data ISO (sem fuso = fuso local)."""
-    now = now or datetime.now(timezone.utc)
-    m = _SINCE.match(value.strip())
-    if m:
-        unit = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}[m.group(2).lower()]
-        return now - timedelta(**{unit: int(m.group(1))})
-    when = ctxmod.parse_ts(value.strip())
-    if when is None:
-        raise UsageError(f"--all-since inválido ({value}): use 30m, 2h, 3d ou AAAA-MM-DDTHH:MM")
-    if not re.search(r"(Z|[+-]\d\d:?\d\d)$", value.strip()):  # sem fuso (inclusive só a data) = hora local
-        return when.replace(tzinfo=None).astimezone()
-    return when
-
-
-def _msg_when(m: dict) -> datetime | None:
-    if "createdDateTime" in m:
-        return ctxmod.parse_ts(m.get("createdDateTime"))
-    return ctxmod.msg_time(m)
-
-
 def _graph_token(profile: config.Profile, xbin: str | None, timeout: float, allow_xteams: bool) -> str:
     """Token do Graph: sessão MSAL do perfil; sem ela, o token Graph do xteams (já logado no Teams).
 
@@ -898,13 +876,15 @@ def _run_auth(parsed: argparse.Namespace, profile: config.Profile, settings: con
 
 
 def _run_message_op(parsed: argparse.Namespace, profile: config.Profile, settings: config.Settings) -> Any:
-    """reply/edit: lê o alvo, confirma e escreve (lógica em message_ops)."""
+    """reply/edit/react/activity: a lógica fica em message_ops, reactions e activity."""
     xbin = xbe.find_bin()
     graph = None
     if _uses_graph(parsed, profile, settings):
         graph = Graph(_graph_token(profile, xbin, settings.timeout, allow_xteams=False), settings.timeout)
     ops = mo.Ops(xbin, settings.timeout, graph, _body, _read_text, _confirmed, _send_guard)
-    return mo.run_op(parsed, ops)
+    if parsed.cmd == "activity":
+        return act.run_op(parsed, ops)
+    return (rx if parsed.sub == "react" else mo).run_op(parsed, ops)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -920,7 +900,7 @@ def main(argv: list[str] | None = None) -> int:
         color = config.colors_allowed(parsed.no_color) and fmt == "human"
         profile = config.resolve_profile(parsed.profile, settings, parsed.client_id, parsed.tenant)
 
-        if (parsed.cmd, getattr(parsed, "sub", None)) in mo.COMMANDS:
+        if (parsed.cmd, getattr(parsed, "sub", None)) in _OP_COMMANDS:
             try:
                 data = _run_message_op(parsed, profile, settings)
             except mo.MessageOpError as exc:
@@ -929,7 +909,10 @@ def main(argv: list[str] | None = None) -> int:
                     emit(exc.result, fmt, color)
                 return EXIT_FAIL
             if not (parsed.quiet and fmt == "human"):
-                emit(data, fmt, color)
+                if parsed.cmd == "activity" and fmt == "human":
+                    print_lines(act.render_human(data))
+                else:
+                    emit(data, fmt, color)
             return EXIT_OK
 
         if (
