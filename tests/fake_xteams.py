@@ -96,8 +96,11 @@ def main(args):
         text = args[args.index("--content") + 1]
         fmt = "html" if "-I" in args and args[args.index("-I") + 1] == "html" else "markdown"
         resp = {"id": "m9", "conversation": args[2], "content": text, "format": fmt}
+        if os.environ.get("FAKE_X_NEW_MESSAGE_ID"):  # xteams real: devolve `message_id`, não `id`
+            resp["message_id"] = resp.pop("id")
         if os.environ.get("FAKE_X_NEW_NOID"):
-            resp.pop("id")
+            resp.pop("id", None)
+            resp.pop("message_id", None)
         if os.environ.get("FAKE_X_NEW_ROOT"):  # a resposta expõe a raiz da thread
             resp["rootMessageId"] = os.environ["FAKE_X_NEW_ROOT"]
         out(resp)

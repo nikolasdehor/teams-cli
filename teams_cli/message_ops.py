@@ -67,6 +67,13 @@ def _text_args(sp: argparse.ArgumentParser, reply: bool) -> None:
         )
 
 
+def add_typing_arg(sp: argparse.ArgumentParser) -> None:
+    sp.add_argument(
+        "--typing", nargs="?", type=int, const=xbe.TYPING_AUTO, default=None, metavar="SEGUNDOS",
+        help="mostra 'digitando' antes de enviar (sem valor: proporcional ao texto, 2 a 8 s; máximo 20)",
+    )
+
+
 def add_parsers(ct_sub: Any, ch_sub: Any, gs: argparse.ArgumentParser) -> None:
     for sub, reply in (("reply", True), ("edit", False)):
         verb = "responder (escrita)" if reply else "editar mensagem sua (escrita)"
@@ -74,6 +81,8 @@ def add_parsers(ct_sub: Any, ch_sub: Any, gs: argparse.ArgumentParser) -> None:
         ct.add_argument("chat_id")
         ct.add_argument("msg_id", help="id da mensagem (veja `chat messages` / `chat context`)")
         _text_args(ct, reply)
+        if reply:
+            add_typing_arg(ct)
         ch = ch_sub.add_parser(sub, parents=[gs], help=f"canal: {verb}")
         ch.add_argument("team_id")
         ch.add_argument("channel_id")
@@ -113,6 +122,14 @@ def _skipped(key: str, parsed: argparse.Namespace, t: Target) -> dict:
     """Dry-run ou recusa do usuário: nada foi escrito (exit 0, como `send`)."""
     return {key: None, "dry_run": parsed.dry_run, "declined": not parsed.dry_run, "id": t.id,
             "conversation": conv_of(parsed)}
+
+
+def sent_id(resp: Any) -> str | None:
+    """Id da mensagem criada: o xteams devolve `message_id`; o Graph, `id`."""
+    if not isinstance(resp, dict):
+        return None
+    value = resp.get("id") or resp.get("message_id")
+    return str(value) if value else None
 
 
 def _unknown(parsed: argparse.Namespace, reason: str, result: dict) -> MessageOpError:
@@ -199,17 +216,20 @@ def _check_reply_target(parsed: argparse.Namespace, ops: Ops, t: Target) -> None
 
 def _confirm_thread(parsed: argparse.Namespace, ops: Ops, resp: dict, root: str, result: dict) -> None:
     """xteams em canal: a resposta tem de ter caído na thread esperada."""
-    got = x_root(resp, str(resp["id"]))
+    got = x_root(resp, str(sent_id(resp)))
     if got is None:
         eprint("aviso: o xteams não confirmou em qual thread a resposta foi publicada; confira no canal.")
     elif got != root:
         raise MessageOpError(
             f"a resposta foi publicada na thread {got} e não na esperada ({root}); confira no canal antes de repetir.",
-            {**result, "sent": resp["id"], "thread": got},
+            {**result, "sent": sent_id(resp), "thread": got},
         )
 
 
 def _reply(parsed: argparse.Namespace, ops: Ops, t: Target, text: str) -> dict:
+    typing = getattr(parsed, "typing", None)
+    if typing not in (None, xbe.TYPING_AUTO):
+        xbe.check_typing_seconds(typing)
     _check_reply_target(parsed, ops, t)
     if ops.graph is None:
         ops.guard(parsed, ops.xbin, ops.timeout)
@@ -220,14 +240,20 @@ def _reply(parsed: argparse.Namespace, ops: Ops, t: Target, text: str) -> dict:
         return _skipped("sent", parsed, t)
     _, content = ops.body(parsed, text)
     base = {"sent": None, "dry_run": False, "declined": False, "reply_to": t.id, "conversation": conv_of(parsed)}
+    if typing is not None and parsed.cmd == "chat":
+        if ops.graph is None:
+            xbe.typing_before_send(ops.xbin, parsed.chat_id, typing, len(text), ops.timeout)
+        else:
+            eprint("aviso: --typing só funciona com o motor xteams; enviando sem o indicador.")
     send = (lambda: _graph_reply(parsed, ops.graph, t, content)) if ops.graph is not None else (
         lambda: _x_reply(parsed, ops, t, content))
     resp = attempt(parsed, send, base)
-    if not isinstance(resp, dict) or not resp.get("id"):
+    new_id = sent_id(resp)
+    if not new_id:
         raise _unknown(parsed, "o servidor não devolveu o id da mensagem enviada", base)
     if parsed.cmd == "channel" and ops.graph is None:
         _confirm_thread(parsed, ops, resp, t.root_id or t.id, base)
-    return {**base, "sent": resp["id"]}
+    return {**base, "sent": new_id}
 
 
 # --- edit ----------------------------------------------------------------------------
