@@ -167,6 +167,13 @@ def build_parser() -> argparse.ArgumentParser:
     cts.add_argument("chat_id", nargs="?", default=None)
     cts.add_argument("--to", default=None, help="email: usa ou cria o 1:1")
     _message_args(cts)
+    mo.add_typing_arg(cts)
+    ctt = ct_sub.add_parser("typing", parents=[gs], help="mostra 'digitando' na conversa, sem enviar mensagem")
+    ctt.add_argument("chat_id")
+    ctt.add_argument(
+        "--seconds", type=int, default=xbe.TYPING_DEFAULT, metavar="N",
+        help=f"duração em segundos (padrão {xbe.TYPING_DEFAULT}, máximo {xbe.TYPING_MAX}); repete o sinal a cada 3 s",
+    )
     mo.add_parsers(ct_sub, ch_sub, gs)
     rx.add_parsers(ct_sub, ch_sub, gs)
     ctc = ct_sub.add_parser("create", parents=[gs], help="criar conversa (escrita)")
@@ -608,6 +615,11 @@ def run_x(parsed: argparse.Namespace, xbin: str | None, timeout: float, fmt: str
         if parsed.chat_id and parsed.to:
             raise UsageError("use CHAT_ID ou --to, não ambos")
         _, desc = _send_payload(parsed, None)
+        typing = getattr(parsed, "typing", None)
+        if typing is not None:
+            if typing != xbe.TYPING_AUTO:
+                xbe.check_typing_seconds(typing)
+            desc += " (com indicador de digitação)"
         return None, f"enviar mensagem para {parsed.chat_id} {desc}"
     if cmd == "people" and sub == "search":
         return xbe.run(xbin, ["user", "search", parsed.query], timeout), None
@@ -627,7 +639,11 @@ def run_x_write(parsed: argparse.Namespace, xbin: str | None, timeout: float) ->
         conv = parsed.chat_id
     if conv is None:
         raise UsageError(f"escrita não suportada via xteams: {cmd} {sub}")
-    _, content = _body(parsed, _read_text(parsed))
+    text = _read_text(parsed)
+    _, content = _body(parsed, text)
+    typing = getattr(parsed, "typing", None)
+    if typing is not None and cmd == "chat":
+        xbe.typing_before_send(xbin, conv, typing, len(text), timeout)
     args = ["message", "new", conv, "--content", content, "-I", "html"]
     return xbe.run(xbin, args, timeout)
 
@@ -887,6 +903,18 @@ def _run_message_op(parsed: argparse.Namespace, profile: config.Profile, setting
     return (rx if parsed.sub == "react" else mo).run_op(parsed, ops)
 
 
+def _run_typing(parsed: argparse.Namespace, settings: config.Settings) -> dict:
+    """`chat typing`: só o sinal de digitação, nenhuma mensagem. --dry-run mostra sem enviar."""
+    seconds = xbe.check_typing_seconds(parsed.seconds)
+    result = {"chat_id": parsed.chat_id, "seconds": seconds, "dry_run": parsed.dry_run, "pulses": 0}
+    if parsed.dry_run:
+        if not parsed.quiet:
+            eprint(f"[dry-run] mostrar 'digitando' em {parsed.chat_id} por {seconds}s (nada executado)", single_line=True)
+        return result
+    result["pulses"] = xbe.send_typing(xbe.find_bin(), parsed.chat_id, seconds, settings.timeout)
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
     try:
         try:
@@ -899,6 +927,14 @@ def main(argv: list[str] | None = None) -> int:
         fmt = "json" if parsed.json else "plain" if parsed.plain else settings.output
         color = config.colors_allowed(parsed.no_color) and fmt == "human"
         profile = config.resolve_profile(parsed.profile, settings, parsed.client_id, parsed.tenant)
+
+        if (parsed.cmd, getattr(parsed, "sub", None)) == ("chat", "typing"):
+            if parsed.graph:
+                raise UsageError("chat typing só funciona com o motor xteams (sem --graph)")
+            data = _run_typing(parsed, settings)
+            if not (parsed.quiet and fmt == "human"):
+                emit(data, fmt, color)
+            return EXIT_OK
 
         if (parsed.cmd, getattr(parsed, "sub", None)) in _OP_COMMANDS:
             try:
@@ -967,6 +1003,8 @@ def main(argv: list[str] | None = None) -> int:
             if plan is not None:
                 if not _confirmed(plan, parsed):
                     return EXIT_OK
+                if getattr(parsed, "typing", None) is not None:
+                    eprint("aviso: --typing só funciona com o motor xteams; enviando sem o indicador.")
                 try:
                     data = run_write(parsed, store)
                 except Forbidden as exc:

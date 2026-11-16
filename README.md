@@ -43,6 +43,7 @@ teams chat messages CHAT_ID [--sizes]            # xteams (até 200; Graph até 
 teams chat download CHAT_ID --out PASTA          # baixa imagens, arquivos, vídeos e cartões
 teams chat send CHAT_ID --message T              # xteams (--to/--file vão pro Graph)
 teams chat reply CHAT_ID MSG_ID --message T      # xteams (citação); Graph com --graph/perfil
+teams chat typing CHAT_ID [--seconds N]          # xteams: mostra "digitando" (padrão 4 s, máximo 20), sem enviar
 teams chat edit CHAT_ID MSG_ID --message T       # xteams; Graph com --graph/perfil
 teams channel reply TEAM_ID CHANNEL_ID MSG_ID [--root RAIZ] --message T  # xteams (thread); Graph com --graph
 teams channel edit TEAM_ID CHANNEL_ID MSG_ID [--root RAIZ] --message T   # xteams; Graph com --graph
@@ -226,8 +227,8 @@ Comportamento (vale para os dois motores):
 - A mensagem-alvo é **sempre lida antes**. Não encontrada (ou resposta com outro id): erro e nada é
   escrito. Em canal, o Graph só lê respostas de thread com `--root` (veja abaixo).
 - Nunca há envio de mensagem nova como alternativa nem retry de escrita. Se o reply ou o edit falhar,
-  o comando termina com exit diferente de 0. Timeout ou falha de rede na escrita, ou reply sem `id`
-  na resposta, dá "resultado desconhecido; confira com `teams ... messages` antes de repetir".
+  o comando termina com exit diferente de 0. Timeout ou falha de rede na escrita, ou reply sem id
+  na resposta (o xteams devolve `message_id`, o Graph `id`), dá "resultado desconhecido; confira com `teams ... messages` antes de repetir".
 - Confirmação como no `send` (`--yes`, `--no-input`, `--dry-run`). O plano do reply mostra autor,
   trecho e (em canal) a raiz da thread; o do edit mostra ANTES e DEPOIS. Dry-run e recusa do usuário
   saem com exit 0. O resultado é sempre um objeto: `{"sent"|"edited": ..., "dry_run": bool,
@@ -351,6 +352,18 @@ Destinatários precisam de acesso ao arquivo no OneDrive para abri-lo; `chat sen
 --to` e a guarda de mensagem recente continuam como antes. Não testado contra o
 Graph real nesta versão (só com respostas simuladas): confira com `--dry-run` e
 um chat de teste antes de usar em produção.
+
+## Indicador "digitando"
+
+`teams chat typing CHAT_ID [--seconds N]` manda o sinal de digitação (`Control/Typing`) ao chat service, repetindo a
+cada 3 s até completar N segundos (padrão 4, máximo 20; o Teams apaga o indicador sozinho em poucos segundos).
+Não envia mensagem. `--dry-run` mostra o que faria sem enviar. Só funciona com o motor xteams.
+
+`chat send` e `chat reply` aceitam `--typing [SEGUNDOS]` para mostrar o indicador antes de enviar. Sem valor, a duração
+é proporcional ao texto (cerca de 1 s a cada 12 caracteres, de 2 a 8 s). Falha no indicador só avisa em stderr e o
+envio segue. Com `--graph`, `--to` ou `--file` (Graph) a opção é ignorada com um aviso.
+
+Limite: o servidor aceita o sinal, mas se o outro lado vê o indicador depende do cliente do Teams.
 
 ## Contrato de I/O
 

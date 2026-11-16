@@ -8,11 +8,12 @@ import re
 import shutil
 import subprocess
 import time
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import quote, urlparse
 
 import requests
 
+from .errors import UsageError
 from .output import eprint
 
 
@@ -187,9 +188,9 @@ _MAX_SINGLE = 20  # teto de GETs individuais para as mensagens que ainda ficaram
 def chat_service(
     xteams: str | None, method: str, path: str, params: dict, timeout: float, body: dict | None = None,
 ) -> Any:
-    """GET/DELETE no chat service com o skype token do xteams, só em `*.msg.teams.microsoft.com` (HTTPS, sem redirect).
+    """GET/DELETE/POST no chat service com o skype token do xteams, só em `*.msg.teams.microsoft.com` (HTTPS, sem redirect).
 
-    GET devolve o JSON (200); DELETE aceita 200/204 e devolve None.
+    GET devolve o JSON (200); DELETE aceita 200/204 e devolve None; POST aceita 200/201 e devolve o JSON ou None.
     """
     token = get_token(xteams, "skype", timeout)
     base = str(((_load_cache().get("skype") or {}).get("chat_service")) or "").rstrip("/")
@@ -197,7 +198,7 @@ def chat_service(
     if parsed.scheme != "https" or not _CHAT_SERVICE_HOST.match(parsed.hostname or ""):
         raise XteamsError("endereço do chat service não confiável")
     delete = method == "DELETE"
-    send = requests.delete if delete else requests.get
+    send: Callable[..., Any] = requests.delete if delete else requests.post if method == "POST" else requests.get
     extra = {"json": body} if body is not None else {}
     try:
         resp = send(
@@ -210,13 +211,15 @@ def chat_service(
         raise XteamsAuthError("sem login no xteams (HTTP 401). Rode `teams auth login` e aprove o código.")
     if resp.status_code >= 500:
         raise XteamsServerError(f"chat service respondeu HTTP {resp.status_code}")
-    if resp.status_code not in ((200, 204) if delete else (200,)):
+    if resp.status_code not in ((200, 204) if delete else (200, 201) if method == "POST" else (200,)):
         raise XteamsError(f"chat service respondeu HTTP {resp.status_code}")
     if delete:
         return None
     try:
         return resp.json()
     except ValueError:
+        if method == "POST":  # o sinal de digitação pode voltar sem corpo JSON
+            return None
         raise XteamsError("chat service devolveu resposta inválida")
 
 
@@ -292,3 +295,50 @@ def add_files(xteams: str | None, conv: str, msgs: Any, timeout: float) -> Any:
         if str(m["id"]) in files:
             m["properties"] = {"files": files[str(m["id"])]}
     return msgs
+
+
+# --- indicador "digitando" -----------------------------------------------------------
+#
+# Mensagem de controle do chat service: não cria mensagem visível. O Teams apaga o indicador
+# sozinho em poucos segundos, então repetimos o sinal enquanto durar.
+
+TYPING_INTERVAL = 3.0
+TYPING_DEFAULT = 4
+TYPING_MAX = 20
+TYPING_AUTO = -1  # `--typing` sem valor: proporcional ao texto
+SLEEP: Callable[[float], None] = time.sleep  # trocado nos testes
+_TYPING_BODY = {"content": "", "contenttype": "Application/Message", "messagetype": "Control/Typing"}
+
+
+def check_typing_seconds(value: int) -> int:
+    if not 1 <= value <= TYPING_MAX:
+        raise UsageError(f"segundos de digitação fora do intervalo 1-{TYPING_MAX}")
+    return value
+
+
+def auto_typing_seconds(chars: int) -> int:
+    """Cerca de 1 s a cada 12 caracteres, de 2 a 8 s."""
+    return max(2, min(8, round(chars / 12)))
+
+
+def send_typing(xteams: str | None, chat_id: str, seconds: int, timeout: float) -> int:
+    """Manda o sinal de digitação a cada 3 s até completar `seconds`. Devolve quantos sinais foram enviados."""
+    path = f"/v1/users/ME/conversations/{quote(chat_id, safe='')}/messages"
+    sent, elapsed = 0, 0.0
+    while True:
+        chat_service(xteams, "POST", path, {}, timeout, body=_TYPING_BODY)
+        sent += 1
+        step = min(TYPING_INTERVAL, seconds - elapsed)
+        SLEEP(step)
+        elapsed += step
+        if elapsed >= seconds:
+            return sent
+
+
+def typing_before_send(xteams: str | None, chat_id: str, requested: int, chars: int, timeout: float) -> None:
+    """Indicador antes de enviar; falha só avisa, nunca impede o envio."""
+    seconds = auto_typing_seconds(chars) if requested == TYPING_AUTO else requested
+    try:
+        send_typing(xteams, chat_id, seconds, timeout)
+    except XteamsError as exc:
+        eprint(f"aviso: não consegui mostrar o indicador de digitação ({exc}); enviando mesmo assim", single_line=True)
